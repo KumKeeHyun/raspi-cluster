@@ -10,6 +10,28 @@ cidr 옵션을 추가해주고 다시 실행했더니 Ready 상태로 변경됨.
 - pod-network-cidr 에 대해서 알아보자
     - 네트워크 주소는 하나같이 `10.224.0.0/16`를 쓰던데 다른걸 써도 상관 없을까?
 
+## run pod in control-plane node
+기본적으로 control-plane node는 pod를 실행하지 못하게 되어있다.
+```
+$ kubectl describe node ${NAME} | grep Taints
+Taints:         node-role.kubernetes.io/master:NoSchedule 
+```
+
+
+Taint를 삭제해주자
+```
+$ kubectl taint nodes ${NAME} --all node-role.kubernetes.io/master-
+```
+
+다시 `NoSchedule` 을 설정하고 싶다면
+```
+$ kubectl taint nodes ${NAME} --all node-role.kubernetes.io/master:NoSchedule
+```
+
+- taint 에 대해서 알아보자
+
+
+
 ## coredns's status ContainerCreating
 - https://stackoverflow.com/questions/59558611/core-dns-stuck-in-containercreating-status
 
