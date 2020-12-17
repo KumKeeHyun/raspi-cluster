@@ -12,7 +12,9 @@ cidr 옵션을 추가해주고 다시 실행했더니 Ready 상태로 변경됨.
 
 ## coredns's status ContainerCreating
 - https://stackoverflow.com/questions/59558611/core-dns-stuck-in-containercreating-status
-구글링을 해보면 하나같이 `flannel`, `cni` 에 대한 말밖에 없다... 그들의 말대로
+
+
+구글링을 해보면 하나같이 `flannel`, `cni` 에 대한 말밖에 없다...
 ```
 $ kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/2140ac876ef134e0ed5af15c65e414cf26827915/Documentation/kube-flannel.yml
 ```
@@ -31,6 +33,24 @@ daemonset.apps/kube-flannel-ds-arm64 created
 daemonset.apps/kube-flannel-ds-arm created
 daemonset.apps/kube-flannel-ds-ppc64le created
 daemonset.apps/kube-flannel-ds-s390x created
+```
+
+클러스터를 중지하기 위해 `kubeadm reset` 을 했더니 다음과 같은 알림이 추가되어 있다.
+```
+The reset process does not clean CNI configuration. To do so, you must remove /etc/cni/net.d
+```
+지우도록 하자
+
+추가로 나오는 알림들이다.
+```
+The reset process does not reset or clean up iptables rules or IPVS tables.
+If you wish to reset iptables, you must do so manually by using the "iptables" command.
+
+If your cluster was setup to utilize IPVS, run ipvsadm --clear (or similar)
+to reset your system's IPVS tables.
+
+The reset process does not clean your kubeconfig files and you must remove them manually.
+Please, check the contents of the $HOME/.kube/config file.
 ```
 
 - flannel 에 대해서 알아보자
