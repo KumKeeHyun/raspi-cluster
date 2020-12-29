@@ -13,7 +13,7 @@ sudo add-apt-repository "deb [arch=arm64] https://download.docker.com/linux/ubun
 sudo apt-get update
 
 # install docker specific version 
-sudo apt-get install docker-ce=${DOCKER_VER} docker-ce-cli=${DOCKER_VER} containerd.io
+sudo apt-get install -y docker-ce=${DOCKER_VER} docker-ce-cli=${DOCKER_VER} containerd.io
 
 # set docker cgroupdriver cgroupfs -> systemd
 cat <<EOF | sudo tee /etc/docker/daemon.json
