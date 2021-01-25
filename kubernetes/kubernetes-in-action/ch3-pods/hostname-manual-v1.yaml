@@ -1,0 +1,11 @@
+apiVersion: v1 # API 버전 지정
+kind: Pod # Pod 유형 지정
+metadata:
+  name: hostname-manual # 파드의 이름 지정
+spec:
+  containers: # 컨테이너 구성
+  - image: kbzjung359/kube-example-hostname
+    name: hostname
+    ports:
+    - containerPort: 8080
+      protocol: TCP

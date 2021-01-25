@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: hostname-manual-prod
+  labels: # 파드에 라벨 설정
+    creation_method: manual # key: creation_method, value: manual
+    env: prod # key: env, value: prod
+spec:
+  containers:
+  - image: kbzjung359/kube-example-hostname
+    name: hostname
+    ports:
+    - containerPort: 8080
+      protocol: TCP
