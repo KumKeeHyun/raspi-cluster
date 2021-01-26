@@ -11,7 +11,7 @@ spec:
   nodeSelector:
     gpu: "false"
   containers:
-  - image: kbzjung359/kube-example-hostname
+  - image: kbzjung359/kia-hostname
     name: hostname
     ports:
     - containerPort: 8080

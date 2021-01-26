@@ -10,7 +10,7 @@ spec:
   nodeSelector: # 파드가 gpu=false 라벨이 설정된 노드에 예약되도록 지정
     gpu: "false"
   containers:
-  - image: kbzjung359/kube-example-hostname
+  - image: kbzjung359/kia-hostname
     name: hostname
     ports:
     - containerPort: 8080

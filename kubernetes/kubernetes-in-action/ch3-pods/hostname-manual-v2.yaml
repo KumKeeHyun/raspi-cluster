@@ -7,7 +7,7 @@ metadata:
     env: prod # key: env, value: prod
 spec:
   containers:
-  - image: kbzjung359/kube-example-hostname
+  - image: kbzjung359/kia-hostname
     name: hostname
     ports:
     - containerPort: 8080

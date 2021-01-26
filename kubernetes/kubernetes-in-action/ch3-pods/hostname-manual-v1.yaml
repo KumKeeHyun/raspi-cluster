@@ -4,7 +4,7 @@ metadata:
   name: hostname-manual # 파드의 이름 지정
 spec:
   containers: # 컨테이너 구성
-  - image: kbzjung359/kube-example-hostname
+  - image: kbzjung359/kia-hostname
     name: hostname
     ports:
     - containerPort: 8080

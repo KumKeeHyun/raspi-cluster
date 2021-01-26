@@ -64,14 +64,14 @@ metadata:
   name: hostname-manual
 spec:
   containers:
-  - image: kbzjung359/kube-example-hostname
+  - image: kbzjung359/kia-hostname
     name: hostname
     ports:
     - containerPort: 8080
       protocol: TCP
 ```
 
-이 디스크립터는 Kubernetes API v1을 준수하고 이름이 hostname-manual인 Pod를 설정하고 있다. 이 파드는 kbzjung359/kube-example-hostname 이미지를 기반으로 하는 단일 컨테이너로 구성되고 8080 포트에서 수신 대기 중이다.
+이 디스크립터는 Kubernetes API v1을 준수하고 이름이 hostname-manual인 Pod를 설정하고 있다. 이 파드는 kbzjung359/kia-hostname 이미지를 기반으로 하는 단일 컨테이너로 구성되고 8080 포트에서 수신 대기 중이다.
 
 파드 정의에 포트를 지정하는 것은 정보 전달용이다. 포트 지정을 생략해도 특정 포트를 통해 파드에 접근할 수 있다. 하지만 클러스터를 사용하는 다른 사람이 파드가 노출하는 포트를 알 수 있도록 명시적으로 정의하는 것이 좋다. 
 
