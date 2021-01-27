@@ -1,5 +1,17 @@
 # Replication and Other Controller
 
+<!--ts-->
+  - [Keeping Pods Healthy](#Keeping-Pods-Healthy)
+    - [활성 프로브](#활성-프로브)
+    - [HTTP GET Probe](#HTTP-GET-Probe)
+    - [활성 프로브의 추가 변수](#활성-프로브의-추가-변수)
+    - [좋은 활성 프로브](#좋은-활성-프로브)
+  - [ReplicationController](#ReplicationController)
+    - [ReplicationController 생성 및 관리](#ReplicationController-생성-및-관리)
+    - [파드 라벨 변경](#파드-라벨-변경)
+
+<!--te-->
+
 ## Keeping Pods Healthy
 파드가 노드에 예약되면 해당 노드의 Kubelet이 파드의 컨테이너를 실행시킨다. 컨테이너의 기본 프로세스가 비정상적으로 종료되면 Kubelet이 자동으로 컨테이너를 다시 시작시키기 때문에 쿠버네티스는 특별한 잡업을 하지 않아도 자체 치유 기능이 제공된다. 
 
@@ -7,8 +19,8 @@
 
 비정상적으로 종료된 컨테이너는 자동으로 다시 실행되기 때문에 어플리케이션에서 오류가 발생하면 프로세스를 종료시키는 방법을 사용할 수 있지만 모든 문제를 해결해 주진 않는다. 예를 들어 무한 루프나 교착 상태인 경우 어플리케이션이 다시 시작되도록 하려면 외부의 도움이 필요하게 된다.
 
-### Liveness Probes
-쿠버네티스는 활성 프로브(Liveness Probes)를 통해 컨테이너의 상태를 확인할 수 있다. 파드 사양에서 각 컨테이너에 대해 활성 프로브를 지정하면 쿠버네티스는 주기적으로 프로브를 실행하고 프로브가 실패하면 컨테이너를 다시 시작시킨다. 활성 프로브 종류는 3가지가 있다.
+### 활성 프로브
+쿠버네티스는 Liveness Probes(이하 활성 프로브)를 통해 컨테이너의 상태를 확인할 수 있다. 파드 사양에서 각 컨테이너에 대해 활성 프로브를 지정하면 쿠버네티스는 주기적으로 프로브를 실행하고 프로브가 실패하면 컨테이너를 다시 시작시킨다. 활성 프로브 종류는 3가지가 있다.
 
 - HTTP GET Probe
     - 사용자가 지정한 포트와 URL 경로로 GET 요청을 보내고 컨테이너가 응답을 하지 않거나 오류 응답 코드를 받으면 프로브는 실패로 간주하고 컨테이너를 다시 시작시킨다.
@@ -97,7 +109,7 @@ Liveness: http-get http://:8080/ delay=0s timeout=1s period=10s #success=1 #fail
 # ...
 livenessProbe:
   # ...
-  inittialDelaySeconds: 15
+  initialDelaySeconds: 15
 ```
 
 프로브의 초기 지연시간을 설정하지 않으면 컨테이너의 앱이 시작되지 않은 상태에서 프로빙이 시작되기 때문에 정상적인 경우에도 프로브 실패로 이어질 수 있다. 
@@ -110,3 +122,177 @@ livenessProbe:
 이때 해당 엔드포인트에 인증이 설정되어있지 않은지 확인해야 한다. 또한 내부 상태를 확인할 때 어플리케이션 외부 요인의 영향을 받지 않는지 확인해야 한다. 예를 들어서 데이터베이스에 연결할 수 없을 때 오류를 반환하도록 하면 안된다. 실제로 근본적인 원인이 데이터베이스에 있는 경우에 컨테이너를 다시 시작해도 오류는 해결되지 않기 때문에 활성 프로브가 계속 실패하게 된다. 마지막윽로 활성 프로브에 설정한 엔드포인트는 너무 많은 리소스를 샤용하지 않고 오래걸리지 않도록 구성해야 한다. 활성 프로브는 비교적으로 자주 실행되기 때문에 컨테이너 속도가 느려질 수 있다.   
 
 컨테이너의 프로세스가 종료되거나 활성 프로브가 실패해서 컨테이너를 다시 시작시키는 작업은 파드가 예약된 노드의 Kubelet에 의해 수행된다. 워커 노드 자체가 망가지는 경우 함께 작동 중지된 파드를 다른 노드에서 재시작 시키는 것은 Kubernetes Control Plane의 역할이지만 사용자가 직접 생성한 파드에 대해서는 해당 작업을 수행하지 않는다. 따라서 사용자가 직접 생성한 파드는 파드가 예약된 노드가 망가지면 아무것도 할 수 없다. 파드가 다른 노드에서 다시 시작되도록 하려면 파드를 ReplicationController, ReplicaSet, DaemonSet, Job 등의 메커니즘에 의해 관리되도록 해야한다.
+
+## ReplicationController
+ReplicationController(이하 RC)는 파드가 계속 실행되도록하는 쿠버네티스 리소스이다. 노드의 장애같은 이벤트로 파드가 중지되는 경우 RC는 누락된 파드를 감지하고 교체 파드를 생성한다.
+
+![image](https://user-images.githubusercontent.com/44857109/105858228-6ab5e600-602e-11eb-911e-5c5889fe4ece.png)
+
+위 그림은 Node1이 다운된 이후 파드A, B에 어떤 일이 일어나는지 나타나있다. 파드A는 직접 생성되었고 파드B는 RC에 의해 관리되는 파드이다. Node1이 장애로 인해 작동이 멈추면 RC는 파드B가 중지되었다는 것을 감지하고 다른 노드에 새로운 파드를 생성하지만 파드A는 그대로 중지된다.
+
+<br>
+
+RC는 실행중인 파드 목록을 지속적으로 모니터링하고 설정된 파드의 수가 실제로 실행되고 있는 파드의 수와 일치하는지 확인한다. 실행중인 파드가 적으면 새로운 파드 복제본을 생성하고 많이 실행되고 있으면 초과된 복제본을 제거한다. RC가 원하는 파드의 복제본 개수를 확인하는 것은 라벨 셀렉터를 기반으로 작동된다. 따라서 RC는 다음과 같은 구성 요소가 있다.
+
+- 파드 복제본을 생성하기 위한 파드 템플릿
+- 유지하고자 하는 파드 복제본 수
+- RC 범위에 있는 파드를 확인하기 위한 라벨 셀렉터
+
+![image](https://user-images.githubusercontent.com/44857109/105860456-ef096880-6030-11eb-99b0-9a11188b15d6.png)
+
+3개 구성 요소 모두 언제든지 수정할 수 있지만 라벨 셀렉터와 파드 템플릿의 변경은 기존에 생성된 파드에 반영되지 않는다. 라벨 셀렉터를 변경하면 기존 파드가 RC의 범위를 벗어날 수 있다. 또한 RC는 파드를 생성한 뒤 파드의 실제 내용(컨테이너 이미지, 환경 변수 등)에 대해서는 고려하지 않는다. 따라서 파드 템플릿의 변경은 이후에 생성된 파드에만 영향을 준다.
+
+ReplicationController는 다음과 같은 기능을 제공한다.
+
+- 기존 파드가 누락된 경우 새로운 파드를 시작해서 원하는 수의 파드가 항상 실행되고 있는지 확인한다.
+- 워커 노드에 장애가 발생하면 해당 노드에서 실행중이던 모든 파드에 대한 대체 복제본을 생성한다.
+  - 파드 인스턴스가 다른 노드로 재배치되는 것이 아니라 완전히 새로운 인스턴스를 생성한다.
+- 수동 및 자동으로 쉽게 파드를 수평 확장할 수 있다.
+
+### ReplicationController 생성 및 관리
+YAML 디스크립터를 이용해서 RC를 생성해보자.
+
+```yaml
+apiVersion: v1
+kind: ReplicationController
+metadata:
+  name: hostname-rc
+spec:
+  replicas: 2 # 복제본 수 설정
+  selector: # RC의 관리 범위 지정
+    app: hostname
+  template: # 생성할 파드를 설정
+    metadata:
+      labels: 
+        app: hostname # 라벨 지정
+    spec:
+      containers:
+      - name: hostname
+        image: kbzjung359/kia-hostname
+        ports:
+        - containerPort: 8080
+```
+
+RC 디스크립터를 작성할 때 주의해야할 점은 셀렉터의 라벨과 템플릿의 라벨이 일치하도록 해야하는 것이다. 라벨이 일치하지 않으면 RC는 파드를 실행시키고 있어도 셀렉터에 의해 추적되지 않아 새로운 파드를 계속 생성하게 된다. 이 시나리오를 방지하기 위해서 Kubernetes API는 디스크립터에서 잘못된 정의가 있는 경우 요청을 처리하지 않는다. 그래서 권장되는 방식은 RC의 라벨 셀렉터는 지정하지 않는 것이다. RC의 셀렉터가 정의되지 않으면 자동으로 템플릿의 라벨을 추출해서 지정되기 때문에 디스크립터를 더 간단하게 작성할 수 있고 실수를 예방할 수 있다.
+
+이제 RC를 통해 파드를 생성하고 파드가 어떻게 유지되는지 확인해보자.
+
+```
+$ kubectl create -f hostname-rc.yaml
+replicationcontroller/hostname-rc created
+
+$ kubectl get pods -L app
+NAME                READY   STATUS    RESTARTS   AGE   APP
+hostname-rc-6j5nt   1/1     Running   0          15s   hostname
+hostname-rc-7wnkx   1/1     Running   0          15s   hostname
+
+# 파드를 수동으로 삭제
+$ kubectl delete pods hostname-rc-7wnkx
+pod "hostname-rc-7wnkx" deleted
+
+# 파드 상태 확인
+$ kubectl get pods -L app
+NAME                READY   STATUS            RESTARTS   AGE     APP
+hostname-rc-6j5nt   1/1     Running            0          7m15s   hostname
+hostname-rc-7wnkx   1/1     Terminating        0          7m15s   hostname
+hostname-rc-l5fdq   1/1     ContainerCreating  0          8s      hostname
+
+# RC 상태 확인
+# replicationcontroller -> rc
+$ kubectl get rc
+NAME          DESIRED   CURRENT   READY   AGE
+hostname-rc   2         2         1       7m20s
+```
+
+파드를 수동으로 삭제하면 RC는 자동으로 새로운 파드 `hostname-rc-l5fdq`를 실행시키는 것을 볼 수 있다. 현재 복제본 수에 포함되지 않지만 종료중인 파드는 실행중인 상태로 간주되기 때문에 3개의 파드가 출력된다.
+
+<그림>
+
+Kubernetes API는 클라이언트가 리소스 및 리소스 목록에 대한 변경을 감시할 수 있도록 허용하기 때문에 RC는 삭제되는 파드에 대해 즉시 알림을 받는다. 하지만 이것이 새로운 복제본 파드를 생성하는 원인은 아니고 RC가 라벨 셀렉터를 통해 실제 파드 수를 확인한 뒤에 적절한 조치를 취하도록 트리거된다.
+
+minikube를 통해 실습하고 있기 때문에 노드 장애에 따른 상태 변화 확인은 생략했다.
+
+### 파드 라벨 변경
+RC에 의해 생성되는 파드는 실제로 RC에 연결되지 않는다. 따라서 파드의 라벨을 수정해서 RC의 범위에서 제거되거나 추가되게 할 수 있다. RC의 라벨 셀렉터와 일치하지 않도록 파드의 라벨을 수정하면 파드는 수동으로 생성된 파드와 동일해진다. RC에 의해 관리되지 않기 때문에 노드에 장애가 생기면 다른 노드에서 다시 시작되지 않는다.
+
+파드의 라벨을 추가, 수정해보고 상태 변화를 확인해보자.
+
+```
+# 새로운 라벨 추가
+$ kubectl label pods hostname-rc-6j5nt type=error
+pod/hostname-rc-6j5nt labeled
+
+$ kubectl get pods --show-labels
+NAME                READY   STATUS    RESTARTS   AGE   LABELS
+hostname-rc-6j5nt   1/1     Running   0          27m   app=hostname,type=error
+hostname-rc-l5fdq   1/1     Running   0          20m   app=hostname
+
+# 셀렉터 범위에 있는 라벨 수정
+$ kubectl label pods hostname-rc-6j5nt app=deprec --overwrite
+pod/hostname-rc-6j5nt labeled
+
+$ kubectl get pods --show-labels
+NAME                READY   STATUS              RESTARTS   AGE   LABELS
+hostname-rc-6j5nt   1/1     Running             0          29m   app=deprec,type=error
+hostname-rc-l5fdq   1/1     Running             0          22m   app=hostname
+hostname-rc-vtxtl   0/1     ContainerCreating   0          2s    app=hostname
+```
+
+RC는 라벨 셀렉터에 지정된 라벨이 있는지 여부만 검사하기 때문에 파드에 새로운 라벨이 추가돼도 여전히 RC의 범위에 있다고 간주한다. 때문에 새로운 파드 복제본이 생성되지 않았다. 반면에 RC 라벨 셀렉터 범위에 있는 app 라벨을 수정한 경우 `hostname-rc-6j5nt`는 RC의 범위를 벗어나게 되고 RC는 복제본 수를 유지하기 위해 새로운 파드를 생성한다. 
+
+<그림>
+
+보통 파드를 RC 범위 밖으로 이동시키는 작업은 오류가 생긴 파드가 생겼을 때 파드를 RC 범위 밖으로 옮기고 새로운 파드가 생성되도록 한 다음 파드를 원하는 방식으로 디버기하는 식으로 작업할 때 사용한다.
+
+만약 RC의 라벨 셀렉터를 수정한다면 이전에 생성된 파드는 모두 RC의 범위를 벗어나게되고 RC는 복제본 수에 맞게 새로운 파드를 생성하게 된다. 
+
+### ReplicationController 스펙 변경
+RC의 파드 템플릿은 언제든지 수정할 수 있다. 수정된 파드 템플릿은 이후에 생성된 파드에만 영향을 미치고 이전에 생성된 파드에는 영향을 주지 않는다. 이전 파드를 수정하려면 해당 파드를 삭제하고 RC가 새로운 템플릿을 기반으로 새 파드를 생성하도록 해야한다.
+
+<그림>
+
+RC를 편집해서 파드 템플릿의 라벨을 추가해보자. `kubectl edit`을 통해 수정할 수 있다.
+
+```
+$ kubectl edit rc hostname-rc
+...
+template:
+  metadata:
+    labels:
+      type: hotfix #새로운 라벨 추가
+...
+replicationcontroller/hostname-rc edited
+```
+
+이제 기존의 파드 한개를 삭제하면 새로 수정된 파드 템플릿을 기반으로 새 파드가 생성된다.
+
+```
+$ kubectl delete pods hostname-rc-l5fdq
+
+$ kubectl get pods --show-labels
+NAME                READY   STATUS              RESTARTS   AGE   LABELS
+hostname-rc-8rzgh   0/1     ContainerCreating   0          2s    app=hostname,type=hotfix
+hostname-rc-l5fdq   1/1     Terminating         0          44m   app=hostname
+hostname-rc-vtxtl   1/1     Running             0          22m   app=hostname
+```
+
+RC가 관리할 파드의 복제본 수를 변경하는 것도 간단하다. 파드 수를 늘리고 줄이는 것은 ReplicationController 리소스에서 replicas 필드 값을 변경하는 것으로 모든 작업이 수행된다. `kubectl edit`을 통해 리소스를 직접 수정하거나 다음 명령으로 수정할 수 있다.
+
+```
+$ kubectl scale rc hostname-rc --replicas=3
+replicationcontroller/hostname-rc scaled
+
+$ kubectl get pods --show-labels
+hostname-rc-8rzgh   1/1     Running             0          4m29s   app=hostname,type=hotfix
+hostname-rc-lqkmb   0/1     ContainerCreating   0          2s      app=hostname,type=hotfix
+hostname-rc-vtxtl   1/1     Running             0          26m     app=hostname
+```
+
+쿠버네티스에서 파드를 수평적으로 확장하는 것은 "인스턴스를 몇 개만큼 실행하고 싶습니다."라고 선언하기만 하면 된다. 쿠버네티스에게 명시적으로 무엇을 어떻게 수행해야하는지 지정하는 것이 아니기 때문에 작업량이 적고 간편하게 쿠버네티스와 상호작용할 수 있다.
+
+### ReplicationController 삭제
+`kubectl delete`를 이용해서 RC를 삭제하면 RC가 관리하고 있던 파드도 함께 삭제된다. 하지만 `--cascade` 옵션을 이용해서 RC만 삭제하고 파드는 실행 상태로 둘 수 있다. 이 방법은 파드는 그대로 두고 파드를 관리하는 컨트롤러를 교체하는 작업에 유용하다. 
+
+```
+$ kubectl delete rc hostname-rc --cascade=false
+```
