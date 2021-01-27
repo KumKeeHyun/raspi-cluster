@@ -1,18 +1,26 @@
-# Replication and Other Controller
+# 4. Replication and Other Controller
 
 <!--ts-->
-  - [Keeping Pods Healthy](#Keeping-Pods-Healthy)
+  - [4.1 Keeping Pods Healthy](#4.1-Keeping-Pods-Healthy)
     - [활성 프로브](#활성-프로브)
     - [HTTP GET Probe](#HTTP-GET-Probe)
     - [활성 프로브의 추가 변수](#활성-프로브의-추가-변수)
     - [좋은 활성 프로브](#좋은-활성-프로브)
-  - [ReplicationController](#ReplicationController)
+  - [4.2 ReplicationController](#4.2-ReplicationController)
     - [ReplicationController 생성 및 관리](#ReplicationController-생성-및-관리)
     - [파드 라벨 변경](#파드-라벨-변경)
+    - [ReplicationController 스펙 변경](#ReplicationController-스펙-변경)
+    - [ReplicationController 삭제](#ReplicationController-삭제)
+  - [4.3 ReplicaSet](#4.3-ReplicaSet)
+    - [ReplicaSet과 ReplicationController 비교](#ReplicaSet과-ReplicationController-비교)
+    - [ReplicaSet 생성 및 관리](#ReplicaSet-생성-및-관리)
+  - [4.4 DaemonSet](#4.4-DaemonSet)
+    - [특정 노드에서만 파드 실행](#특정-노드에서만-파드-실행)
+  - [4.5 Job](#4.5-Job)
 
 <!--te-->
 
-## Keeping Pods Healthy
+## 4.1 Keeping Pods Healthy
 파드가 노드에 예약되면 해당 노드의 Kubelet이 파드의 컨테이너를 실행시킨다. 컨테이너의 기본 프로세스가 비정상적으로 종료되면 Kubelet이 자동으로 컨테이너를 다시 시작시키기 때문에 쿠버네티스는 특별한 잡업을 하지 않아도 자체 치유 기능이 제공된다. 
 
 하지만 어플리케이션이 프로세스 종료없이 작동을 멈추는 경우가 있다. 예를 들어, 메모리 누수가 있는 JAVA 프로그램은 OutOfMemoryErrors를 발생시키지만 JVM 프로세스는 계속 실행된다. 때문에 어플리케이션이 더 이상 제대로 작동하지 않는다는 신호를 쿠버네티스에 알리고 다시 시작하도록 하는 방법이 필요하다.
@@ -123,7 +131,7 @@ livenessProbe:
 
 컨테이너의 프로세스가 종료되거나 활성 프로브가 실패해서 컨테이너를 다시 시작시키는 작업은 파드가 예약된 노드의 Kubelet에 의해 수행된다. 워커 노드 자체가 망가지는 경우 함께 작동 중지된 파드를 다른 노드에서 재시작 시키는 것은 Kubernetes Control Plane의 역할이지만 사용자가 직접 생성한 파드에 대해서는 해당 작업을 수행하지 않는다. 따라서 사용자가 직접 생성한 파드는 파드가 예약된 노드가 망가지면 아무것도 할 수 없다. 파드가 다른 노드에서 다시 시작되도록 하려면 파드를 ReplicationController, ReplicaSet, DaemonSet, Job 등의 메커니즘에 의해 관리되도록 해야한다.
 
-## ReplicationController
+## 4.2 ReplicationController
 ReplicationController(이하 RC)는 파드가 계속 실행되도록하는 쿠버네티스 리소스이다. 노드의 장애같은 이벤트로 파드가 중지되는 경우 RC는 누락된 파드를 감지하고 교체 파드를 생성한다.
 
 ![image](https://user-images.githubusercontent.com/44857109/105858228-6ab5e600-602e-11eb-911e-5c5889fe4ece.png)
@@ -296,3 +304,243 @@ hostname-rc-vtxtl   1/1     Running             0          26m     app=hostname
 ```
 $ kubectl delete rc hostname-rc --cascade=false
 ```
+
+## 4.3 ReplicaSet
+초창기에 쿠버네티스에서 파드를 복제하고 재시작시키는 리소스 유형은 ReplicationController 밖에 없었다. 나중에 RC와 유사한 컨트롤러인 ReplicaSet(이하 RS)가 도입되었고 RC를 완전히 대체했다. 일반적으로 컨트롤러는 직접적으로 생성하지 않고 상위 레벨 리소스에 의해 자동으로 생성된 것을 사용할 것이지만 어차피 개념을 알고 넘어가야 한다.
+
+### ReplicaSet과 ReplicationController 비교
+RS는 RC와 똑같이 작동하지만 파드의 범위를 지정하는 셀렉터의 표현력이 더 뛰어나다. RC의 라벨 셀렉터는 지정된 라벨과 일치하는 파드만 허용하지만 RS는 특정 라벨이 없거나 라벨의 키만 일치하는 파드도 허용할 수 있다. RS는 라벨이 각각 `env=prod`, `env=devel`인 파드들을 하나의 그룹으로 관리할 수 있다. 또한 키가 `env`인 라벨을 갖고있는 모든 파드들도 한 그룹으로 관리할 수 있다.
+
+
+### ReplicaSet 생성 및 관리
+이전에 작성했던 ReplicationController를 ReplicaSet으로 대체하는 YAML 디스크립터를 작성해보자.
+
+```yaml
+apiVersion: apps/v1beta2 # ReplicaSet은 v1beta2 API 그룹에 있다.
+kind: ReplicaSet
+metadata:
+  name: hostname-rs
+spec:
+  replicas: 2
+  selector:
+    matchLabels: # ReplicaSet에서 보완된 셀렉터 유형
+      app: hostname
+  template:
+    metadata:
+      labels:
+        app: hostname
+    spec:
+      containers:
+      - name: hostname
+        image: kbzjung359/kia-hostname
+```
+
+RC와 비교해서 apiVersion 그룹이 v1beta2로 변경되었고 셀렉터 속성 바로 아래에 라벨을 지정하는 대신 matchLabels 속성이 추가되었다. 이외에 파드 템플릿은 RC와 동일하다.
+
+> apiVersion은 API 그룹, 실제 API 버전으로 나뉜다. 쿠버네티스의 코어 API 그룹에 있는 리소스들은 API 그룹을 지정할 필요가 없다. Pod 리소스를 지정할 때 `v1`으로 API 그룹을 명시하지 않았다. 이후 쿠버네티스 버전에서 추가된 리소스들은 세부적인 API 그룹으로 나뉘어져 있기 때문에 API 그룹을 명시해야 한다. ReplicaSet의 경우 API 그룹은 `apps`이다. 이후에 실제 버전인 `v1beta2`을 표기한다.
+
+<br>
+
+RC에 비해 RS의 주요 개선 사항은 라벨 셀렉터이다. RS는 RC의 셀렉터와 동일하게 작동하는 `matchLabels`과 더불어 `matchExpressions`을 통해 더 강력한 셀렉터를 지원한다.
+
+```yaml
+selector:
+  matchExpressions:
+  - key: app
+    operator: In
+    values:
+    - hostname
+```
+
+셀렉터에는 여러개의 표현식을 추가할 수 있다. 이때 각 표현식에는 `key`, `operator`는 필수로 포함되어야 한다. 연산자는 다음 4가지가 있다.
+
+- In: `values` 속성에 지정된 값중에 하나가 라벨의 값과 일치해야 함.
+- NotIn: `values` 속성에 지정된 값중에 하나라도 라벨의 값과 매치되지 않아야 함.
+- Exists: 갖고 있는 라벨의 키중에 지정된 키가 포함되어야 함. 이때 `values` 속성은 지정하지 않는다. 
+- DoesNotExist: 갖고 있는 라벨의 키중에 지정된 키가 포함되지 않아야 함. 이때 `values` 속성은 지정하지 않는다.
+
+셀렉터에 여러개의 표현식을 지정하는 경우 셀렉터가 파드와 일치하려면 모든 표현식이 true로 평가되어야 한다.
+
+<br>
+
+ReplicationController와 마찬가지로 ReplicaSet를 삭제하면 셀렉터에 일치하는 모든 파드가 함께 삭제된다. 
+
+```
+# replicaset -> rs
+$ kubectl delete rs hostname-rs
+```
+
+## 4.4 DaemonSet
+ReplicationController와 ReplicaSet는 모두 쿠버네티스 클러스터의 임의의 노드들에서 특정 수의 파드를 실행하는데 사용된다. 이와 반대로 클러스터의 모든 노드에서 파드를 실행해야하는 경우가 있다.
+
+![image](https://user-images.githubusercontent.com/44857109/105988412-ebceb500-60e2-11eb-8aa2-0e4f83214cdc.png)
+
+일반적으로 시스템 수준의 작업을 수행하는 인프라 관련 파드를 실행하는 경우에 사용한다. 예를 들어 쿠버네티스의 `kube-proxy`는 클러스터 구성을 위해 모든 노드에서 실행되어야 한다. 이러한 구성이 필요한 경우에 DaemonSet(이하 DS)을 사용한다. 
+
+DS는 클러스터를 구성하는 노드 수만큼 파드를 생성하고 파드를 각 노드에 배포한다. DS는 복제본 수에 대한 개념이 없다. 작업은 파드 셀렉터와 일치하는 파드가 가 노드에서 실행되고 있는지 확인하는 것이기 때문에 복제를 고려하지 않는다. 노드가 다운되면 DS로 인해 파드가 다른 곳에 생성되지 않는다. 하지만 새로운 노드가 클러스터에 추가되면 DS는 즉시 새 파드 인스턴스를 해당 노드에 배포한다. 누군가가 실수로 DS 범위에 있는 파드를 삭제하는 경우에 DS는 RS와 마찬가지로 구성된 파드 템플릿에 따라 해당노드에 새로운 파드를 생성한다.
+
+### 특정 노드에서만 파드 실행
+DaemonSet은 클러스터의 모든 노드에 파드를 배포하지만 노드 셀렉터를 이용해서 특정 노드 그룹에서만 실행되도록 지정할 수도 있다. 
+
+> 쿠버네티스에는 특정 노드에 예약할 수 없게 만들어서 파드가 해당 노드에 배포되지 않도록 할 수 있다. 하지만 DaemonSet에 의해 관리되는 파드는 기본적으로 스케줄러를 거치지 않고 배포되기 때문에 이러한 노드에도 예약될 수 있다. DaemonSet은 일반적으로 시스템 서비스를 실행하기 위한 것이기 때문에 바람직한 작동이다.
+
+SSD가 있는 모든 노드에서 실행해야 하는 데몬을 실행한다고 가정해보자. 해당 노드들은 클러스터 관리자에 의해 `disk=ssd` 라벨이 추가되어 있기 때문에 해당 라벨을 선택하는 노드 셀렉터로 DS를 만들면 된다.
+
+![image](https://user-images.githubusercontent.com/44857109/105992188-22f39500-60e8-11eb-8021-3f7c39af4810.png)
+
+5초마다 STDOUT에 "SDD OK"를 출력하는 프로세스를 DS로 만드는 디스크립터를 만들어보자. 이 도커 이미지는 직접 빌드하지 않고 책에서 주는 이미지를 사용했다.
+
+```yaml
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: ssd-monitor
+spec:
+  selector:
+    matchLabels:
+      app: ssd-monitor
+    template:
+      metadata:
+        labels:
+          app: ssd-monitor 
+      spec:
+        nodeSelector:
+          disk: ssd
+        containers:
+        - name: main
+          image: luksa/ssd-monitor
+```
+
+이제 노드에 `disk=ssd` 라벨을 추가하고 DS를 생성해보자.
+
+```
+$ kubectl create -f ssd-monitor.yaml
+
+$ kubectl label node minikube disk=ssd
+
+$ kubectl get pods
+NAME                READY   STATUS              RESTARTS   AGE
+ssd-monitor-fv5pp   0/1     ContainerCreating   0          3s
+
+# daemonset -> ds
+$ kubectl get ds
+NAME          DESIRED   CURRENT   READY   UP-TO-DATE   AVAILABLE   NODE SELECTOR   AGE
+ssd-monitor   1         1         1       1            1           disk=ssd        2m52s
+```
+
+노드에 해당 라벨을 제거하면 어떻게 될까? 당연히 실행중이던 파드가 종료된다. 이건 간단해서 실습은 넘어갔다.
+
+## 4.5 Job
+지금까지 공부한 ReplicationController, ReplicaSet, DaemonSet은 작업이 완료되고 종료되는 상황을 고려하지 않고 프로세스가 종료되면 자동으로 다시 시작시킨다. 하지만 작업이 완료되면 종료되는 작업을 실행해야 하는 경우가 있다. 이를 위해선 프로세스가 종료된 후에 다시 시작시키지 않는 컨트롤러가 필요하다. Job 리소스는 내부에서 실행중인 프로세스가 성공적으로 완료될 때 컨테이너가 다시 시작되지 않는 파드를 실행할 수 있다.
+
+Job이 실행되고 있던 노드가 장애로 다운되면 ReplicaSet와 같은 방식으로 다른 노드에 다시 예약된다. 프로세스 자체가 실패한 경우(프로세스의 종료코드가 오류 종료 코드인 경우) 컨테이너를 다시 시작하거나 다시 시작하지 않도록 작업을 구성할 수 있다. 아래 그림은 Job과 ReplicaSet에 의해 생성된 파드의 생명 주기를 보여준다.
+
+![image](https://user-images.githubusercontent.com/44857109/105997515-0c9d0780-60ef-11eb-981a-90e69a729bb9.png)
+
+Job은 작업이 정상적으로 완료되는 것이 중요한 임시 작업에 유용하다. 어떠한 컨트롤러에도 관리되지 않는 파드를 생성하고 완료될 때까지 기다리는 방법도 있지만, 이 방법은 노드가 다운되는 경우 대처 방안이 없다. 보통 어떤 위치에 저장되어 있는 데이터를 가공해서 다른 곳으로 내보내야 하는 배치작업에 사용된다.
+
+### Job 생성 및 관리
+2분동안 Sleep하고 종료되는 컨테이너를 기반으로 Job을 실행해보자.
+
+```yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: batch-job
+spec:
+  template:
+    metadata:
+      labels:
+        app: batch-job
+    spec:
+      restartPolicy: OnFailure # 비정상 종료일 때 재시작
+      containers:
+      - name: main
+        image: luksa/batch-job
+```
+
+`restartPolicy` 속성을 통해서 실행중인 프로세스가 종료될 때 쿠버네티스가 수행해야 하는 작업을 지정할 수 있다. 이 속성은 기본값이 Always이지만 Job은 무기한 실행되지 않는 작업이기 때문에 항상 OnFailure 또는 Never 옵션을 명시적으로 지정해야 한다.
+
+이제 Job을 실행해보자.
+
+```
+$ kubectl create -f batch-job.yaml
+
+$ kubectl get job
+NAME        COMPLETIONS   DURATION   AGE
+batch-job   0/1           31s        31s
+
+$ kubectl get pods
+NAME              READY   STATUS    RESTARTS   AGE
+batch-job-9zkdc   1/1     Running   0          19s
+
+
+# 2분 뒤
+$ kubectl get job
+NAME        COMPLETIONS   DURATION   AGE
+batch-job   1/1           2m9s       2m11s
+
+$ kubectl get pods
+NAME              READY   STATUS      RESTARTS   AGE
+batch-job-9zkdc   0/1     Completed   0          2m19s
+```
+
+## 여러 파드 인스턴스 실행
+Job은 둘 이상의 파드 인스턴스를 생성하고 병렬 또는 순차적으로 실행하도록 구성할 수 있다. `completions`, `parallelism` 속성을 통해 설정할 수 있다.
+
+```yaml
+# ...
+spec:
+  completions: 5
+  template:
+    # ...
+# ...
+```
+
+위의 디스크립터로 생성된 Job은 파드를 순차적으로 5개의 파드를 실행시킨다. 중간에 오류로 인해 실패하는 파드가 있을 수 있기 때문에 5개 이상의 파드가 생성될 수 있다.
+
+`paralleism` 속성을 통해 하나의 파드를 차례로 실행하는 대신 여러 파드를 병렬로 실행하도록 할 수 있다.
+
+```yaml
+# ...
+spec:
+  comletions: 5
+  paralleism: 2
+  template:
+    # ...
+# ...
+```
+
+위의 디스크립터로 생성된 Job은 최대 2개의 파드를 병렬로 실행하고, 그중 하나의 파드가 성공적으로 종료되면 이후 5개의 파드가 성공적으로 종료될 때까지 다음 파드를 실행한다.
+
+병렬적으로 Job이 실행되는 도중에 병렬로 실행되는 파드의 수를 변경할 수 있다. 이 작업은 ReplicaSet과 유사하게 `kubectl scale`을 통해 수행한다.
+
+```
+$ kubectl scale job multi-batch-job --replicas 3
+```
+
+## 4.6 CronJob
+보통 배치 작업은 미래의 특정 시간에 실행되거나 지정된 간격으로 반복적으로 실행된다. Linux 같은 운영체제에서 이러한 작업을 cron 작업이라 부른다. 쿠버네티스도 이 작업을 지원한다.
+
+CronJob 디스크립터는 다음과 같이 작성할 수 있다.
+
+```yaml
+apiVersion: batch/v1beta1
+kind: CronJob
+metadata:
+  name: batch-job-every-fifteen-minutes
+spec:
+  schedule: "0,15,30,45 * * * *" # 매 시간 0, 15, 30, 45분에 실행
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: periodic-batch-job
+        spec:
+          restartPolicy: OnFailure
+          containers:
+          - name: main
+            image: luksa/batch-job
+```
+

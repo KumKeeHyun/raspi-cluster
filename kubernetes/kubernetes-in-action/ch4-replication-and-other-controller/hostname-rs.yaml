@@ -1,0 +1,20 @@
+apiVersion: apps/v1beta2 # ReplicaSet은 v1beta2 API 그룹에 있다.
+kind: ReplicaSet
+metadata:
+  name: hostname-rs
+spec:
+  replicas: 2
+  selector:
+    matchExpressions: 
+    - key: app
+      operator: In
+      values:
+      - hostname
+  template:
+    metadata:
+      labels:
+        app: hostname
+    spec:
+      containers:
+      - name: hostname
+        image: kbzjung359/kia-hostname
