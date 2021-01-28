@@ -1,4 +1,4 @@
-# 4. Replication and Other Controller
+# Chapter 4. Replication and other controllers: deploying managed pods
 
 <!--ts-->
   - [4.1 Liveness Probe](#4.1-Liveness-Probe)
