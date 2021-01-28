@@ -5,14 +5,16 @@
     - [서비스 생성](#서비스-생성)
     - [클러스터 내에서 서비스로 접근](#클러스터-내에서-서비스로-접근)
     - [서비스 리소스 사용](#서비스-리소스-사용)
+  - [5.2 Connecting to Services Living Outside the Cluster](#5.2-Connecting-to-Services-Living-Outside-the-Cluster)
+    - [엔드포인트](#엔드포인트)
+    - [수동으로 엔드포인트 구성](#수동으로-엔드포인트-구성)
+  - [5.3 Exposing Services to External Clients](#5.3-Exposing-Services-to-External-Clients)
+    - [NodePort](#NodePort)
+    - [LoadBalancer](#LoadBalancer)
+    - [외부 연결의 특성 이해](#외부-연결의-특성-이해)
   - [](#)
     - [](#)
     - [](#)
-    - [](#)
-  - [](#)
-    - [](#)
-    - [](#)
-  - [](#)
   - [](#)
   - [](#)
 
@@ -32,7 +34,7 @@
 ![image](https://user-images.githubusercontent.com/44857109/106131217-bfc83800-61a5-11eb-92ab-c2cfdb888ef3.png)
 
 ### 서비스 생성
-서비스로 들어오는 요청은 해당 서비스가 관리하는 파드로 로드벨런싱된다. 서비스에 포함되는 파드와 그렇지 않는 파드를 정의하는 방법은 라벨 셀렉터와 동일한 메커니즘을 사용한다.
+서비스로 들어오는 요청은 해당 서비스가 관리하는 파드로 로드밸런싱된다. 서비스에 포함되는 파드와 그렇지 않는 파드를 정의하는 방법은 라벨 셀렉터와 동일한 메커니즘을 사용한다.
 
 ![image](https://user-images.githubusercontent.com/44857109/106132321-2863e480-61a7-11eb-86f9-c4c5b4f06bc2.png)
 
@@ -206,3 +208,165 @@ $ kubectl exec -it hostname-rc-9qhbv -- bash
 # curl hostname:80
 You've hit hostname-rc-qsth7
 ```
+
+<br>
+
+## 5.2 Connecting to Services Living Outside the Cluster
+쿠버네티스 서비스 리소스는 클라이언트 파드가 내부 서비스에 접근하는 것처럼 클러스터 외부에 있는 서비스에 접근할 수 있도록 구성할 수 있다.
+
+### 엔드포인트
+사실 서비스는 파드에 직접적으로 연결되지 않는다. 즉 서비스의 파드 셀렉터는 서비스로 들어오는 요청을 리다이렉션할 때 직접 사용되지 않는다. 대신 파드 셀렉터를 사용하여 얻은 파드들의 IP 및 포트 목록을 Endpoint 리소스에 저장한다. 클라이언트가 서비스에 요청을 보내면 서비스 프록시는 Endpoint에 있는 목록 중 하나를 선택해서 리다이렉션한다.
+
+`kubectl describ svc` 또는 `kubectl get endpoints`를 통해 실제 서비스가 유지하고 있는 Endpoint를 확인할 수 있다.
+
+```
+$ kubectl decribe svc hostname
+Name:              hostname
+Namespace:         default
+Labels:            <none>
+Annotations:       <none>
+Selector:          app=hostname
+Type:              ClusterIP
+IP Families:       <none>
+IP:                10.108.167.231
+IPs:               10.108.167.231
+Port:              <unset>  80/TCP
+TargetPort:        8080/TCP
+Endpoints:         172.17.0.2:8080,172.17.0.3:8080
+Session Affinity:  None
+
+$ kubectl get endpoints hostname
+NAME       ENDPOINTS                         AGE
+hostname   172.17.0.2:8080,172.17.0.3:8080   18h
+```
+
+### 수동으로 엔드포인트 구성
+파드 셀렉터를 지정하지 않고 서비스를 생성하면 쿠버네티스는 엔드포인트 리소스를 만들지 않는다. 이런 경우 서비스에 대한 엔드포인트 목록을 사용자가 수동으로 지정할 수 있다.
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: external-service
+spec:
+  ports:
+  - port: 80
+```
+
+```yaml
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: external-service
+subsets:
+  - addresses:
+    - ip: 11.11.11.11
+    - ip: 22.22.22.22
+    ports:
+    - port: 80
+```
+
+서비스를 파드 셀렉터 없이 생성했기 때문에 서비스에 대한 엔트포인트 리소스를 수동으로 만들어줘야 한다. 이때 주의할 점은 서비스와 엔트포인트 이름을 동일하게 설정해야 하는 것이다. 이 구성에 대한 그림은 아래와 같다.
+
+![image](https://user-images.githubusercontent.com/44857109/106240153-205b8180-6247-11eb-9f61-1b7217e9ea9b.png)
+
+나중에 외부 서비스를 쿠버네티스에서 실행되는 파드로 마이그레이션하기로 결정했다면 파드의 구성을 변경할 필요 없이 해당 서비스에 파드 셀렉터를 추가해서 엔드포인트가 자동으로 관리되도록 할 수 있다. 역순으로도 쉽게 마이그래이션할 수 있다.  
+
+<br>
+
+도메인을 사용한다면 외부 엔트포인트를 더 간단하게 구성할 수 있다. 예를 들어 외부에 `api.somecompany.com`로 사용가능한 API가 있다고 한다면 `ExternalName`을 이용해서 서비스를 구성할 수 있다.
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: external-service
+spec:
+  type: ExternalName
+  externalName: api.somecompany.com
+  ports:
+  - port: 80
+```
+
+서비스가 생성되면 클러스터 내부의 파드는 해당 외부서비스에 `api.somecompany.com` 뿐만 아니라 `external-service.default.svc.cluster.local`으로도 접근할 수 있게 된다. 이렇게 하면 파드에서 실제 서비스 이름과 해당 위치가 숨겨지기 때문에 나중에 언제든지 서비스 구성을 수정해서 다른 외부 서비스를 가리킬 수 있다. 
+
+ExternalName은 DNS 수준에서만 사용할 수 있다. 또한 ClusterIP가 생성되지 않기 때문에 서비스 프록시를 사용하지 않고 외부서비스로 직접 연결된다.
+
+<br>
+
+## 5.3 Exposing Services to External Clients
+서비스 리소스의 타입을 지정하지 않고 생성하면 기본 타입은 ClusterIP이다. 해당 서비스는 클러스터 내부에서만 사용할 수 있지만 `NodePort`, `LoadBalancer` 타입 또는 `Ingress` 리소스를 통해 클러스터 내부의 파드를 외부로 노출할 수 있다.
+
+![image](https://user-images.githubusercontent.com/44857109/106244797-d2e31280-624e-11eb-8849-5424e45edf95.png)
+
+- NodePort: 클러스터 내의 모든 노드에서 특정 포트를 열고 해당 포트로 들어오는 요청을 서비스로 리다이렉션한다. 서비스는 클러스터 내부에서 ClusterIP로 접근할 수 있을뿐만 아니라 모든 노드의 IP를 통해서도 접근할 수 있다.
+- LoadBalancer: NodePort를 확장하는 타입이다. 클라우드 플랫폼에서 프로비저닝해주는 로드밸런서를 통해서 해당 서비스에 접근할 수 있게 해준다.
+- Ingress: 여러 개의 서비스를 한 IP로 노출시킬 수 있는 다른 타입의 리소스이다. HTTP 수준에서 작동되기 떄문에 서비스보다 더 많은 기능을 제공한다.
+
+### NodePort
+NodePort 타입으로 서비스를 생성해보자.
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: hostname-nodeport
+spec:
+  type: NodePort
+  ports:
+  - port: 80
+    targetPort: 8080
+    nodePort: 30123
+  selector:
+    app: hostname
+```
+
+이전에 생성했던 서비스에서 `kubectl edit`을 통해 NodePort로 수정했다.
+
+```
+$ kubectl get svc
+NAME         TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)        AGE
+hostname     NodePort    10.108.167.231   <none>        80:30123/TCP   20h
+kubernetes   ClusterIP   10.96.0.1        <none>        443/TCP        5d
+```
+
+PORT가 ClusterIP 포트와 NodePort를 나타내는 `80:30123`으로 변경되었다. 이제 해당 서비스에 다음과 같이 접근할 수 있다.
+
+- 10.108.167.231:80
+- {Node's IP}:30123
+
+![image](https://user-images.githubusercontent.com/44857109/106248312-27d55780-6254-11eb-9eb3-95aa19aa5448.png)
+
+Node1으로 들어온 요청은 서비스로 리다이렉션되기 때문에 Node2에서 실행되고 있는 파드로 전달될 수도 있다. 또한 모든 노드의 포트 30123을 통해 서비스에 접근할 수 있기 때문에 클라이언트가 어떤 노드에 요청을 보내야 할지는 중요하지 않다. 하지만 클라이언트가 하나의 노드로만 요청을 하면 해당 노드가 실패할 때 클라이언트는 해당 서비스에 접근할 수 없게된다. 따라서 NodePort를 사용할 땐 노드 앞에 로드밸런서를 배치해서 모든 정상 노드에 요청을 분산하는 것이 적절하다.
+
+### LoadBalancer
+이 타입은 GKE 같은 클라우드 서비스에서 사용하는 것 같아서 패스했다.
+
+### 외부 연결의 특성 이해
+서비스를 외부로 노출할 때 몇가지 고려할 사항이 있다.
+
+#### 불필요한 네트워크 홉 방지
+외부 클라이언트가 NodePort를 통해 서비스에 연결하는 경우 임의로 선택된 파드가 연결을 수신한 노드에서 실행되는 파드가 아닌 경우 네트워크 홉이 증가하게 된다. 
+
+`externalTrafficPolicy` 속성을 이용해서 외부 요청을 수신한 노드에서 실행중인 파드로만 트래픽을 전달하는 서비스를 구성할 수 있다. 하지만 요청을 수신한 노드에 해당 서비스의 파드가 실행중이지 않으면 연결은 중단된다. 따라서 로드밸런서가 해당 파드가 하나 이상 있는 노드에만 트래픽을 전달하는지 확인해야 한다.
+
+```yaml
+apiVersion: v1
+kind: Service
+# ...
+spec:
+  externalTrafficPolicy: Local
+# ...
+```
+
+이 옵션이 항상 최선의 방법이 되는 건 아니다. 일반적으로 externalTrafficPolicy 속성을 사용하면 트래픽이 모든 파드에 균등하게 분산되지 않는다. 
+
+![image](https://user-images.githubusercontent.com/44857109/106253245-96b5af00-625a-11eb-8309-2ed117d70d94.png)
+
+
+#### 클라이언트의 IP가 보존되지 않음
+일반적으로 클러스터 내부의 클라이언트가 서비스에 요청하면 해당 서비스의 파드는 클라이언트의 IP를 얻을 수 있다. 하지만 NodePort를 통해 들어오는 외부 요청에 대해서는 패킷에 SNAT(Source Network Address Translation)가 수행되기 때문에 실제 클라이언트 IP를 볼 수 없다.  
+
+externalTrafficPolicy 속성을 로컬로 설정한 서비스에 대해서는 추가적인 네트워크 홉이 발생하기 않기 때문에 이 경우에는 클라이언트 IP가 보존된다.
+
+## Ingress
