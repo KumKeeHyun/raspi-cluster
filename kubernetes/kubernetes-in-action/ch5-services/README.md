@@ -12,12 +12,12 @@
     - [NodePort](#NodePort)
     - [LoadBalancer](#LoadBalancer)
     - [외부 연결의 특성 이해](#외부-연결의-특성-이해)
+  - [5.4 Exposing Services Externally Through an Ingress Resource](#5.4-Exposing-Services-Externally-Through-an-Ingress-Resource)
+    - [Ingress 생성](#Ingress-생성)
+    - [Ingress 작동 방식](#Ingress-작동-방식)
+    - [Ingress에 여러 서비스 노출시키기](#Ingress에-여러-서비스-노출시키기)
   - [](#)
-    - [](#)
-    - [](#)
   - [](#)
-  - [](#)
-
 <!--te-->
 
 ## 5.1 Introducing Services
@@ -369,4 +369,132 @@ spec:
 
 externalTrafficPolicy 속성을 로컬로 설정한 서비스에 대해서는 추가적인 네트워크 홉이 발생하기 않기 때문에 이 경우에는 클라이언트 IP가 보존된다.
 
-## Ingress
+## 5.4 Exposing Services Externally Through an Ingress Resource
+서비스를 외부로 노출시키는 경우 각 서비스당 하나의 외부 IP와 로드밸런서를 사용해야 한다. Ingress 리소스는 호스트 또는 경로에 따라 요청을 여러 서비스에 포워딩하기 때문에 하나의 IP로 여러 서비스에 접근할 수 있게 해준다. 또한 Ingress는 7계층에서 작동하기 때문에 HTTP에 관련된 다양한 기능(Session Affinity, TLS)을 수행할 수 있다.
+
+### Ingress 생성
+YAML 디스크립터로 Ingress를 생성해보자.
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: hostname
+spec:
+  rules:
+  - host: hostname.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: hostname-nodeport
+            port:
+              number: 80
+```
+
+이 Ingress는 Ingress Controller에서 호스트가 `hostname.example.com`인 수신한 모든 HTTP 요청을 hostname-nodeport 서비스로 포워딩한다.
+
+```
+$ kubectl get ingress
+NAME       CLASS    HOSTS                  ADDRESS        PORTS   AGE
+hostname   <none>   hostname.example.com   192.168.49.2   80      2m23s
+```
+
+이제 `hostname.example.com`을 `192.168.49.2`으로 인식할 수 있도록 DNS 서버를 구성하거나 `/etc/hosts`에 다음을 추가하자.
+
+```
+# /etc/hosts에 추가
+192.168.49.2    hostname.example.com
+```
+
+이제 컴퓨터에서 hostname.example.com 도메인을 Ingress Controller로 인식할 수 있게 되었다. 이 도메인으로 요청을 보내보자.
+
+```
+$ curl hostname.example.com
+You've hit hostname-rc-9qhbv
+```
+
+### Ingress 작동 방식
+![image](https://user-images.githubusercontent.com/44857109/106282395-df359280-6283-11eb-8c14-437089c9be3f.png)
+
+Ingress Controller는 수신한 HTTP 요청의 헤더를 보고 `hostname.example.com` 도메인이 어떤 서비스로 포워딩해야 하는지 판단한다. 이후 요청을 해당 서비스로 포워딩하지 않고 서비스의 엔드포인트를 조회해서 얻은 파드 리스트중 하나를 선택해서 직접 파드로 포워딩한다.
+
+### Ingress에 여러 서비스 노출시키기
+Ingress 디스크립터에서 `rules`, `paths`는 배열이기 때문에 여러개의 호스트, 경로를 지정할 수 있다. 먼저 경로를 여러개로 설정해보자.
+
+```yaml
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: hostname
+spec:
+  rules:
+  - host: hostname.example.com
+    http:
+      paths:
+      - path: /first
+        backend:
+          serviceName: hostname-nodeport
+          servicePort: 80 
+      - path: /second
+        backend:
+          serviceName: hostname2-nodeport
+          servicePort: 80
+```
+
+이 경우 요청청된 URL 경로에 따라 다른 서비스로 요청이 포워딩된다.
+
+```
+# hostname-nodeport 서비스로 포워딩
+$ curl hostname.example.com/first
+
+# hostname2-nodeport 서비스로 포워딩
+$ curl hostname.example.com/second
+```
+
+> Ingress의 API 버전이 networking.k8s.io/v1가 되면서 path 설정 방법이 달라졌다. 그래서 위 방식은 extensions/v1beta1 버전에서만 가능한 것 같다.
+
+<br>
+
+이제 호스트를 여러개로 구성해서 Ingress를 생성해보자.
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: hostname
+spec:
+  rules:
+  - host: hostname.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: hostname-nodeport
+            port:
+              number: 80
+  - host: example.hostname.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: hostname2-nodeport
+            port:
+              number: 80
+```
+
+```
+# hostname-nodeport 서비스로 포워딩
+$ curl example.hostname.com
+
+# hostname2-nodeport 서비스로 포워딩
+$ curl hostname.example.com
+```
+
+
