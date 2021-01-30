@@ -16,8 +16,12 @@
     - [Ingress 생성](#Ingress-생성)
     - [Ingress 작동 방식](#Ingress-작동-방식)
     - [Ingress에 여러 서비스 노출시키기](#Ingress에-여러-서비스-노출시키기)
-  - [](#)
-  - [](#)
+  - [5.5 Signaling When a Pod is Ready to Accept Connections](#5.5-Signaling-When-a-Pod-is-Ready-to-Accept-Connections)
+    - [Readiness Probe](#Readiness-Probe)
+    - [파드에 Readiness Probe 추가](#파드에-Readiness-Probe-추가)
+    - [Readiness Probe가 수행해야 하는 작업](#Readiness-Probe가-수행해야-하는-작업)
+  - [5.6 Using a Headless Service for Discovering Individual Pods](#5.6-Using-a-Headless-Service-for-Discovering-Individual-Pods)
+  - [5.7 서비스 관련 트러블슈팅](#5.7-서비스-관련-트러블슈팅)
 <!--te-->
 
 ## 5.1 Introducing Services
@@ -497,4 +501,102 @@ $ curl example.hostname.com
 $ curl hostname.example.com
 ```
 
+### Ingress가 TLS 트래픽을 처리하도록 구성
+Ingress Controller에 TLS(HTTPS)와 관련된 모든 작업을 처리하게 하면 뒤에 있는 파드는 해당 작업을 수행할 필요가 없어진다. 하지만 지금 당장 필요하진 않아서 넘어가기로 했다.
 
+## 5.5 Signaling When a Pod is Ready to Accept Connections
+서비스를 구성하는 파드가 시작할 때 데이터를 로드하거나 외부 서비스와 커넥션 맺는 경우 클라이언트 요청을 처리하기 까지 준비 과정이 필요하다. 이 경우 서비스는 해당 파드가 준비 과정을 끝낼 때까지 요청을 전달하면 안된다. 
+
+### Readiness Probe
+liveness probe(활성 프로브)가 주기적으로 컨테이너의 상태를 체크하고 비정상 컨테이너를 자동으로 재시작하도록 하는 것과 메커니즘으로 쿠버네티스는 readiness probe(준비 프로브)를 지원한다. 준비 프로브는 주기적으로 호출되고 파드가 클라이언트 요청을 수신할 수 있는 상태인지 체크한다. 활성 프로브와 마찬가지로 준비 프로브를 구현하는 것은 어플리케이션 개발자의 책임이다. 준비 프로브도 3가지 유형이 있고 활성 프로브와 기능이 같다.
+
+- HTTP GET Probe
+- TCP Socket Probe
+- Exec Probe
+
+컨테이너가 시작되면 쿠버네티스는 첫 번째 준비 프로브를 호출하기 전에 일정 시간동안 기다리도록 구성할 수 있다. 그 다음 주기적으로 준비 프로브가 호출되고 프로브의 결과에 따라 해당 파드가 서비스의 엔드포인트에 포함될지 제거될지 결정한다.
+
+활성 프로브와는 달리 준비 프로브는 프로브 결과가 실패할 때 컨테이너를 다시 시작시키지 않는다. 아래 그림에서 볼 수 있듯이 파드의 준비 프로브가 실패하면 해당 파드가 서비스의 파드 셀렉터의 범위에 있어도 엔드포인트에서 제거된다. 
+
+![image](https://user-images.githubusercontent.com/44857109/106348287-86f4a400-6308-11eb-8fb1-aaaae370d4d2.png)
+
+### 파드에 Readiness Probe 추가
+기존에 생성해둔 ReplicationController의 파드 템플릿에 준비 프로브를 추가해보자.
+
+```yaml
+apiVersion: v1
+kind: ReplicationController
+# ...
+spec:
+  # ...
+  template:
+    containers:
+    - name: hostname
+      image: luksa/kubia
+      readinessProbe:
+        exec:
+          command:
+          - ls
+          - /var/ready
+  # ...
+# ...
+```
+
+실습의 편의를 위해 `ls /var/ready` 명령을 주기적으로 실행하는 형태로 준비 프로브를 구성했다. 해당 명령은 `/var/ready` 파일이 없는 경우 0이 아닌 종료코드를 반환하기 때문에 파일의 유무에 따라 준비 프로브가 실패하게 구성할 수 있다. 
+
+파드 템플릿을 변경했기 때문에 이전에 생성된 파드를 삭제하고 새로운 파드를 생성하자. /var/ready 파일을 생성하지 않은 상태에서 리소스를 출력해보자.
+
+```
+# 파드의 READY 상태가 0으로 표시
+$ kubectl get pods
+NAME                READY   STATUS    RESTARTS   AGE
+hostname-rc-2qn7p   0/1     Running   0          2m5s
+hostname-rc-2zjhp   0/1     Running   0          2m5s
+
+# 서비스의 엔드포인트가 없음
+$ kubectl get endpoints hostname-nodeport
+NAME                ENDPOINTS   AGE
+hostname-nodeport               16h
+
+# 서비스의 ClusterIP로 요청을 보냈을 때 실패
+$ kubectl exec hostname-rc-2qn7p -- curl -s 10.110.50.82
+curl: (7) Failed to connect to 10.110.50.82 port 80: Connection refused
+command terminated with exit code 7
+```
+
+hostname-rc-2qn7p 파드에 /var/ready 파일을 생성해서 준비 프로브가 성공하도록 구성해보자.
+
+```
+$ kubectl exec hostname-rc-2qn7p -- touch /var/ready
+
+$ kubectl get pods
+NAME                READY   STATUS    RESTARTS   AGE
+hostname-rc-2qn7p   1/1     Running   0          10m
+hostname-rc-2zjhp   0/1     Running   0          10m
+
+$ kubectl get endpoints hostname-nodeport
+NAME                ENDPOINTS         AGE
+hostname-nodeport   172.17.0.7:8080   16h
+
+$ kubectl exec hostname-rc-2qn7p -- curl -s 10.110.50.82
+You've hit hostname-rc-2qn7p
+```
+
+### Readiness Probe가 수행해야 하는 작업
+이전 실습은 편의를 위해 서비스와는 상관없는 특정 파일의 유무로 준비 상태를 체크했다. 실제 환경에서 구성하는 준비 프로브는 어플리케이션이 클라이언트 요청을 처리할 수 있는지 여부에 따라 성공 또는 실패를 반환해야 한다. 
+
+파드에 준비 프로브를 추가하지 않으면 파드가 생성되는 즉시 서비스의 엔드포인트에 추가된다. 만약 어플리케이션이 요청을 처리할 수있는 상태가 되기까지 시간이 너무 오래걸리면 문제가 생길 수 있다. 따라서 기본 URL 경로에 HTTP 요청을 보내는 것처럼 간단한 형태라도 항상 준비 프로브를 구성하는 것이 좋다.
+
+
+## 5.6 Using a Headless Service for Discovering Individual Pods 
+좀 읽다보니 내가 쓸 일은 없을 것 같아서 넘어가기로 했다.
+
+## 5.7 서비스 관련 트러블슈팅
+서비스 리소스는 쿠버네티스에서 중요한 개념이지만 사용하기 까다롭다. 서비스 문제를 해결하는 팁들을 간단히 살펴 보는 것이 좋다.
+
+- ClusterIP를 사용하고 있다면 클러스터 내부에서 연결하고있는지 확인하자.
+- 서비스의 ClusterIP로 ping 하지 말자.
+- Readiness Probe를 설정했다면 해당 프로브가 성공했는지 확인하자. 만약 실패했다면 해당 파드는 서비스의 엔드포인트로 등록되지 않는다.
+- FQDN를 통해 서비스에 접근이 잘 안될때 먼저 ClusterIP를 통해 서비스에 접근할 수 있는지 확인해보자.
+- 서비스에 의해 노출된 포트 번호로 요청하고 있는지 확인하자.
+- 파드 IP를 통해 어플리케이션에 접근할 수 없는 경우 어플리케이션이 localhost에만 바인딩 되어있지 않은지 확인하자.
