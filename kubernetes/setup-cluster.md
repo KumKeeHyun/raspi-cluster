@@ -62,6 +62,40 @@ weave-net-rqhsk                       2/2     Running   1          4m
 
 이렇게 하면 DaemonSet 및 몇가지 네트워크, 보안 관련 리소스가 배포된다.
 
+## 메트릭스 서버 추가
+CPU, 메모리 사용량을 확인해보려고 `kubectl top`을 사용했더니 메트릭스를 사용할 수 없다고 나온다. 찾아보니 메트릭스 서버는 자동으로 설치되는게 아니라서 직접 설치해야 한다고 한다.
+
+[출처](#https://m.blog.naver.com/isc0304/221860790762)
+
+```
+$ kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/download/v0.3.7/components.yaml
+```
+
+메트릭스 서버는 실행되지만 TLS 통신이 제대로 이뤄지지 않아서 몇가지 설정을 해줘야 한다.
+
+```
+$ kubectl edit deployments.apps -n kube-system metrics-server
+
+...
+spec:
+containers:
+- args:
+- --cert-dir=/tmp
+- --secure-port=4443
+- --kubelet-insecure-tls # 추가된 옵션
+- --kubelet-preferred-address-types=InternalIP # 추가된 옵션
+...
+
+deployment.apps/metrics-server edited
+
+$ kubectl top node
+NAME          CPU(cores)   CPU%   MEMORY(bytes)   MEMORY%
+balns-k8s-1   460m         11%    1685Mi          45%
+balns-k8s-2   194m         4%     1363Mi          17%
+balns-k8s-3   196m         4%     1098Mi          14%
+```
+
+
 ## kubectl 설정
 원격으로 클러스터를 사용해보자. 
 
