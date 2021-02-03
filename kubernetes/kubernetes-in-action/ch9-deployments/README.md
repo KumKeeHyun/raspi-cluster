@@ -8,11 +8,12 @@
   - [9.2 Performing an Automatic Rolling Update with a ReplicationController](#9.2-Performing-an-Automatic-Rolling-Update-with-a-ReplicationController)
     - [rolling-update가 폐기된 이유](#rolling-update가-폐기된-이유)
   - [9.3 Using Deployments for Updating Apps Declaratively](#9.3-Using-Deployments-for-Updating-Apps-Declaratively)
-    - [](#)
-    - [](#)
-    - [](#)
-    - [](#)
-    - [](#)
+    - [Deployment 생성](#Deployment-생성)
+    - [Deployment 업데이트](#Deployment-업데이트)
+    - [Deployment 롤백](#Deployment-롤백)
+    - [롤아웃 속도 제어](#롤아웃-속도-제어)
+    - [롤아웃 프로세스 일시 정지 시키기](#롤아웃-프로세스-일시-정지-시키기)
+    - [잘못된 버전 출시 방지](#잘못된-버전-출시-방지)
 <!--te-->
 
 ## 9.1 Updating Applications Running in Pods
@@ -276,7 +277,7 @@ hostname-7cf6d977b9   0         0         0       6h1m
 
 <br>
 
-## Deployment 롤백
+### Deployment 롤백
 롤백을 시연하기 위해 처음 4번의 요청은 성공하고 다음 요청부터는 오류를 반환하는 `kbzjung359/kia-hostname:v3`를 생성했다. 새로운 버전으로 업데이트해보자.
 
 ```
@@ -382,7 +383,7 @@ REVISION  CHANGE-CAUSE
 
 <br>
 
-### 롤아웃 소도 제어
+### 롤아웃 속도 제어
 롤아웃을 수행할 때 새 파드가 생성되고 이전 파드가 삭제되는 방식은 롤링 업데이트 전략의 두가지 추가 속성을 통해 구성할 수 있다. `maxSurge`, `maxUnavailable` 속성은 롤링 업데이트 중에 한번에 교체되는 파드의 수를 설정한다.
 
 - maxSurge
@@ -466,4 +467,83 @@ hostname-7cf6d977b9-t2zbg   1/1     Running             0          59m
 
 <br>
 
-### 
+### 잘못된 버전 출시 방지
+처음에 Deployment 리소스를 생성했을 때 `minReadySeconds` 속성을 설정했었다. 롤아웃 과정을 확인해보기 위해서 롤아웃 속도를 늦추는 목적으로 사용했지만 실제로 롤링 업데이트를 수행할 때 모든 파드를 한번에 교체하지 않는 목적으로 사용한다. 즉 이 속성의 주요 기능은 그저 재미로 속도를 조절하는 것이 아니라 오작동하는 버전 배포를 방지하는 것이다.
+
+`minReadySeconds`이 설정되면 새 파드가 Readiness Probe에 의해 ready 상태가 되더라도 롤아웃 프로세스를 해당 시간동안 더 기다린다. 파드를 프로덕션에 배포하기 전에 테스트 및 스테이징 환경 모두에서 철저하게 테스트를 하겠지만 이 설정값을 통해서 프로덕션에 버그가 있는 버전을 배포하지 않도록 하는 에어백 역할을 한다.
+
+적절한 Readiness Probe와 minReadySecond을 설정하면 쿠버네티스가 버그가 있는 버전을 배포하지 않도록 할 수 있다.
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hostname
+spec:
+  replicas: 3
+  minReadySeconds: 10
+  strategy: # 업데이트 전략 설정
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: hostname
+  template:
+    metadata:
+      name: hostname
+      labels:
+        app: hostname
+    spec:
+      containers:
+      - image: kbzjung359/kia-hostname:v3
+        name: nodejs
+        ports:
+        - containerPort: 8080
+        readinessProbe: # 준비 프로브 설정
+          periodSeconds: 1
+          httpGet:
+            path: /
+            port: 8080
+```
+
+기존의 Deployment를 업데이트하려면 `kubectl apply` 명령어를 사용한다.
+
+```
+$ kubectl apply -f hostname-dp-readiness.yaml
+Warning: resource deployments/hostname is missing the kubectl.kubernetes.io/last-applied-configuration annotation which is required by kubectl apply. kubectl apply should only be used on resources created declaratively by either kubectl create --save-config or kubectl apply. The missing annotation will be patched automatically.
+deployment.apps/hostname configured
+```
+
+> `kubectl apply`는 선언적으로 이전에 생성된 리소스에만 사용해야 하기 때문에 `kubernetes.io/last-applied-configuration` 주석을 사용해야 한다고 경고를 준다.
+
+```
+$ while true; do curl 192.168.219.201:30123; sleep 1; done
+This is v4 running in pod hostname-5467ccddb6-976rr
+This is v4 running in pod hostname-5467ccddb6-pt864
+This is v4 running in pod hostname-5467ccddb6-pt864
+This is v4 running in pod hostname-5467ccddb6-976rr
+This is v4 running in pod hostname-5467ccddb6-976rr
+This is v4 running in pod hostname-5467ccddb6-976rr
+^C
+
+$ kubectl get po
+NAME                        READY   STATUS    RESTARTS   AGE
+hostname-5467ccddb6-976rr   1/1     Running   0          21h
+hostname-5467ccddb6-9dz5w   1/1     Running   0          21h
+hostname-5467ccddb6-pt864   1/1     Running   0          21h
+hostname-86b784bfd5-94dcz   0/1     Running   0          2m17s
+```
+
+원래대로라면 `hostname-86b784bfd5-94dcz` 는 처음 4개의 요청은 정상적으로 처리하기 때문에 해당 Deployment의 서비스에 요청을 하면 해당 파드로 몇개의 요청이 전달됐어야 했지만 그렇지 않았다. 
+
+실제로 `hostname-86b784bfd5-94dcz` 파드는 처음 4개의 요청을 처리하기 전까지는 정상 동작하기 때문에 롤아웃 프로세스는 새 파드가 작동하는 것을 확인하고 다음 파드를 생성할 수 있었다. 하지만 minReadySeconds를 10초로 설정했기 때문에 바로 다음 파드를 생성하지 않고 10초를 더 기다린 것이다. 그동안 Readiness Porbe가 매초 준비상태를 확인하는 요청을 보내게 되고 그 과정에서 프로브가 실패해서 더이상 롤아웃 프로세스가 진행되지 않았던 것이다.
+
+
+![image](https://user-images.githubusercontent.com/44857109/106748833-21d2e280-6669-11eb-828f-1258554b3532.png)
+
+minReadySeconds를 설정하지 않고 Readiness Probe만 설정했다면 첫 번째 준비 프로브의 호출이 성공하면 바로 이어서 롤아웃이 진행됐을 것이다. 
+
+Deployment는 `progressDeadlineSeconds`를 설정해서 롤아웃 프로세스가 해당 시간동안 진행할 수 없으면 실패한 것으로 간주해서 자동으로 롤아웃을 중단시킨다. 기본값은 10분이다.
+

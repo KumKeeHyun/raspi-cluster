@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hostname
+spec:
+  replicas: 3
+  minReadySeconds: 10
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: hostname
+  template:
+    metadata:
+      name: hostname
+      labels:
+        app: hostname
+    spec:
+      containers:
+      - image: kbzjung359/kia-hostname:v3
+        name: nodejs
+        ports:
+        - containerPort: 8080
+        readinessProbe:
+          periodSeconds: 1
+          httpGet:
+            path: /
+            port: 8080

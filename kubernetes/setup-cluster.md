@@ -65,7 +65,7 @@ weave-net-rqhsk                       2/2     Running   1          4m
 ## 메트릭스 서버 추가
 CPU, 메모리 사용량을 확인해보려고 `kubectl top`을 사용했더니 메트릭스를 사용할 수 없다고 나온다. 찾아보니 메트릭스 서버는 자동으로 설치되는게 아니라서 직접 설치해야 한다고 한다.
 
-[출처](#https://m.blog.naver.com/isc0304/221860790762)
+[출처](https://m.blog.naver.com/isc0304/221860790762)
 
 ```
 $ kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/download/v0.3.7/components.yaml
