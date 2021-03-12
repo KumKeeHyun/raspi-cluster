@@ -44,7 +44,7 @@ func (s *kvstore) Propose(k string, v string) {
 // }
 func (s *kvstore) readCommits(commitC <-chan *commit, errorC <-chan error) {
 	for commit := range commitC {
-		if commit == nil { // commit이 nil이라면 snapshot을 적재하라는 뜻
+		if commit == nil { // commit이 nil이라면 엔트리를 전달하기 전단계. snapshot을 적재하라는 뜻
                            // 지정된 디렉토리에서 스냅샷을 읽어 statemachine에 적재
 			snapshot, err := s.loadSnapshot()
 			if err != nil {
