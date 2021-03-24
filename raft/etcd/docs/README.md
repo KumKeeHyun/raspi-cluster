@@ -1,7 +1,7 @@
 # ETCD Raft 모듈 코드 분석
 ## 서론
 ### 왜 이 코드를 분석하게 되었나?
-작년에 선배의 소개로 `Kafka`, `Elasticsearch`을 공부하면서 분산 환경을 처음 접해보았습니다. 여러 머신에서 요청을 분산해서 처리하고 하나의 머신이 동작을 멈춰도 복제된 내용을 통해 내구성을 갖는 시스템이 너무 멋있었고 이런 분산, 복제 시스템에 관심을 갖게되었습니다. 
+코시국으로 갈피를 못잡고 있던 작년에 선배의 소개로 `Kafka`, `Elasticsearch`을 공부하면서 분산 환경을 처음 접했습니다. 여러 머신에서 요청을 분산해서 처리하고 하나의 머신이 동작을 멈춰도 복제된 내용을 통해 내구성을 갖는 시스템이 너무 멋있었고 이런 분산, 복제 시스템에 관심을 갖고 공부하게 되었습니다. 
 
 저는 `Medium` 사이트에서 글을 찾아 읽는 것을 좋아하는데 마침 추천 리스트에 있는 `나는 어떻게 분산 환경을 공부했는가(영어로 쓰여있었음)`라는 글을 읽고 `Raft 합의 알고리즘`을 알게되었습니다. 자연스럽게 Raft에 대해 공부하면서 `In Search of an Understandable Consensus Algorithm-Diego` 논문과 여러 아티클을 읽게 되었습니다. 이후 근자감이 차올라 직접 구현을 해보려다가 Raft가 얼마나 복잡하고 어려운 알고리즘인지만 깨닫고 결국 구현되어있는 코드를 분석해보는 목표를 세웠습니다. 
 
@@ -148,7 +148,7 @@ Raft는 여러 머신에서 복제된 상태를 유지할 수 있게 하는 합�
 ```
 
 ## 네트워크, 스토리지 계층과 raftpb.Message
-<img src="https://user-images.githubusercontent.com/44857109/112468548-bd501c00-8dab-11eb-8b63-bf461cde45e4.png" width="40%" height="40%">
+<img src="https://user-images.githubusercontent.com/44857109/112468548-bd501c00-8dab-11eb-8b63-bf461cde45e4.png" width="70%" height="70%">
 
 - 이 그림은 raft 라이브러리의 핵심 object인 raft.Node가 어떻게 다른 사용자가 구현한 Application(네트워크, 스토리지 계층)과 소통하는지 정리한 그림이다.
 
@@ -248,7 +248,7 @@ func (p *peer) send(m raftpb.Message) {
 }
 
 // https://github.com/etcd-io/etcd/blob/master/server/etcdserver/api/rafthttp/pipeline.go#L92
-func (p *pipeline) handle() {
+func (p *pipeline) handle() { // pipeline을 담당하는 고루틴
 	defer p.wg.Done()
 
 	for {
@@ -265,9 +265,75 @@ func (p *pipeline) handle() {
 }
 ```
 
-## 
+<br>
 
-## raft 구조체 (raft.go)
+다음 코드는 raftexample에서 네트워크 계층을 통해 전달받은 raftpb.Message를 로컬 노드에서 처리하도록 전달하기 위해 수행된 콜스택이다.
+
+```go
+// https://github.com/etcd-io/etcd/blob/master/contrib/raftexample/raft.go#L479
+func (rc *raftNode) serveRaft() {
+  // ...
+	err = (&http.Server{Handler: rc.transport.Handler()}).Serve(ln) // 네트워크 계층을 구현한 HTTP Server 시작
+	// ...
+}
+
+// https://github.com/etcd-io/etcd/blob/master/server/etcdserver/api/rafthttp/transport.go#L157
+func (t *Transport) Handler() http.Handler {
+	pipelineHandler := newPipelineHandler(t, t.Raft, t.ClusterID) // http.Handler(ServeHTTP) 인터페이스를 구현한 구조체 
+  // ...
+	mux := http.NewServeMux()
+	mux.Handle(RaftPrefix, pipelineHandler)
+  // ...
+	return mux
+}
+
+// https://github.com/etcd-io/etcd/blob/master/server/etcdserver/api/rafthttp/http.go#L95
+func (h *pipelineHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// ...
+	limitedr := pioutil.NewLimitedBufferReader(r.Body, connReadLimitByte)
+	b, err := ioutil.ReadAll(limitedr) // HTTP Request Body 읽기
+	// ...
+	var m raftpb.Message
+	if err := m.Unmarshal(b); err != nil { // raftpb.Message으로 역직렬화
+		// ...
+		return
+	}
+  // ...
+	if err := h.r.Process(context.TODO(), m); err != nil { // raft 모듈로 메시지 전달
+		// ...
+		return
+	}
+  // ...
+}
+
+// https://github.com/etcd-io/etcd/blob/master/contrib/raftexample/raft.go#L499
+func (rc *raftNode) Process(ctx context.Context, m raftpb.Message) error {
+	return rc.node.Step(ctx, m) // raft.Node가 메시지를 처리하도록 호출
+}
+
+// https://github.com/etcd-io/etcd/blob/master/raft/node.go#L300
+func (n *node) run() {
+  // ...
+	for {
+		// ...
+		select {
+		// ...
+		case m := <-n.recvc:
+      // 적절하지 않은 메시지 필터링
+			if pr := r.prs.Progress[m.From]; pr != nil || !IsResponseMsg(m.Type) {
+				r.Step(m) // 실제 raft 모듈이 메시지를 처리하도록 전달
+			}
+    // ...
+		}
+	}
+}
+```
+
+## raft.Node가 raftpb.Message를 처리하는 방법
+이제 raft.Node가 Application 또는 다른 peer 노드와 어떻게 소통하는지 알았으면 이 메시지를 어떻게 처리하는지 알아봐야 한다. 수많은 타입의 raftpb.Message를 처리하는 함수는 raft.raft.Step(msg) 이다. 
+
+> `raft.raft.Step`는 처음 raft(package 이름), 두번째 raft(object 이름)이 같아서 구분하기 위해 저렇게 표기했다. 다음부터는 `raft.Step`으로 표기할 것이다. 
+
 
 ## 
 
