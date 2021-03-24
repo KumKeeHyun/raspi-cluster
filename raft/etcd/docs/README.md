@@ -2,7 +2,9 @@
 ## 서론
 ### 왜 이 코드를 분석하게 되었나?
 작년에 선배의 소개로 `Kafka`, `Elasticsearch`을 공부하면서 분산 환경을 처음 접해보았습니다. 여러 머신에서 요청을 분산해서 처리하고 하나의 머신이 동작을 멈춰도 복제된 내용을 통해 내구성을 갖는 시스템이 너무 멋있었고 이런 분산, 복제 시스템에 관심을 갖게되었습니다. 
+
 저는 `Medium` 사이트에서 글을 찾아 읽는 것을 좋아하는데 마침 추천 리스트에 있는 `나는 어떻게 분산 환경을 공부했는가(영어로 쓰여있었음)`라는 글을 읽고 `Raft 합의 알고리즘`을 알게되었습니다. 자연스럽게 Raft에 대해 공부하면서 `In Search of an Understandable Consensus Algorithm-Diego` 논문과 여러 아티클을 읽게 되었습니다. 이후 근자감이 차올라 직접 구현을 해보려다가 Raft가 얼마나 복잡하고 어려운 알고리즘인지만 깨닫고 결국 구현되어있는 코드를 분석해보는 목표를 세웠습니다. 
+
 제가 알고있는 프로젝트중에 Raft를 사용하는 프로젝트는 `Zookeeper`, `ETCD`정도였습니다. Zookeeper는 Kafka를 사용해보면서 친숙함이 있었지만 Kafka 이후 버전에서는 자체적으로 Raft를 구현하고 Zookeeper를 사용하지 않는다고 들어서 미래가 밝아보이지 않다는 생각을 했습니다. 또 Java에 대한 지식이 깊지 않아서 제외했습니다. 이에 반해서 ETCD는 정말 핫한 `Kubernetes`에서 메타데이터를 저장하는 Key-Value Store로 사용하고 있고 ETCD의 Raft 모듈이 cockroachDB같은 다른 프로젝트에서도 사용할만큼 신뢰성이 높고 추상화도 잘되어있는 것 같아서 ETCD 코드를 선택했습니다. 추가적으로 `Golang`으로 구현되어있기 때문에 Go를 공부하고있는 저에게 정말 알맞는 코드라 생각했습니다. 
 
 ### 들어가기 전에
@@ -14,7 +16,7 @@ Raft는 여러 머신에서 복제된 상태를 유지할 수 있게 하는 합�
 ## ETCD Raft Readme
 
 ### Features
-먼저 ETCD Readme 문서에 쓰여있는 특징은 다음과 같습니다.
+먼저 ETCD Raft Readme 문서에 쓰여있는 특징은 다음과 같습니다.
 
 #### 기본적인 Raft 프로토콜 구현
 - 리더 선출
@@ -37,9 +39,8 @@ Raft는 여러 머신에서 복제된 상태를 유지할 수 있게 하는 합�
 
 대부분의 Raft 구현은 Storage 처리, 로그 메시징 직렬화와 네트워크 전송등을 포함한 Monolithic 디자인을 갖고 있습니다. 대신 ETCD의 Raft 라이브러리는 Raft의 핵심 알고리즘만 구현하여 최소한의 디자인만 따릅니다. (역주: 스토리지, 네트워크 계층은 이 라이브러리를 사용하는 사용자가 구현해야 함.)
 
-
 ### Usage
-`etcd/raft/README.md#Usage`에 나와있는 예시 코드가 실제 코드와 다른 점이 있어서 코드에 기반해서 몇가지 수정해서 작성했습니다.
+`etcd/raft/README.md#Usage`에 나와있는 예시 코드가 소스 코드와 다른 점이 있어서 소스 코드를 기준으로 몇가지 수정해서 작성했습니다.
 
 1. Raft의 주요 Object인 Node를 생성, 시작
 - 3개의 노드(id:1,2,3)로 구성된 클러스터를 초기화하는 경우
@@ -146,5 +147,127 @@ Raft는 여러 머신에서 복제된 상태를 유지할 수 있게 하는 합�
   n.ProposeConfChange(ctx, cc)
 ```
 
-## ETCD Example
-바로 Raft 구현 코드를 보기전에 이 모듈이 어떻게 사용되는지 살펴보면서 ETCD의 Raft 모듈은 어떤 부분을 책임지고 어떤 부분을 사용자의 책임으로 남겨두었는지 알아보는게 중요하다고 생각합니다. 마침 [github.com/etcd-io/etcd/contrib/raftexample](https://github.com/etcd-io/etcd/tree/master/contrib/raftexample)에 Raft 모듈을 사용해서 간단한 Key-Value Store를 만드는 예시 코드가 있었습니다. 
+## 네트워크, 스토리지 계층과 raftpb.Message
+<img src="https://user-images.githubusercontent.com/44857109/112468548-bd501c00-8dab-11eb-8b63-bf461cde45e4.png" width="40%" height="40%">
+
+- 이 그림은 raft 라이브러리의 핵심 object인 raft.Node가 어떻게 다른 사용자가 구현한 Application(네트워크, 스토리지 계층)과 소통하는지 정리한 그림이다.
+
+소스 코드를 읽기 전에는 리더 선출, 로그 복제 등의 작업에서 노드간 네트워크 통신을 분리하는 정도의 추상화가 가능한지 의문이 들었다. 선거에서 투표를 요청하거나 복제할 Entries를 전달할 때는 peer 노드의 개수만큼 스레드를 생성해서 RPC나 Rest API 등의 네트워크 요청을 보내는 것이 당연하다고 생각했었다. ETCD는 이러한 작업을 추상화 하기 위해 requestVote, appendEntries heartbeat, installSnapshot 등의 네트워크 작업을 raftpb.Message로 나타낼 수 있도록 추상화하였다.
+
+```protobuf
+// For description of different message types, see:
+// https://pkg.go.dev/go.etcd.io/etcd/raft/v3#hdr-MessageType
+enum MessageType {
+	MsgHup             = 0; // 로컬 노드가 선거를 시작하도록 함. (Local)
+	MsgBeat            = 1; // 로컬 노드가 모든 peer 노드들에게 MsgHeartBeat 메시지를 보내도록 함 (Leader -> Leader)
+	MsgProp            = 2; // state-machine을 변경하기 위한 제안 메시지 (Local)
+	MsgApp             = 3; // 로그 복제를 위해 Entries를 보냄 (Leader -> Follower)
+	MsgAppResp         = 4; // MsgApp 응답 (Follower -> Leader)
+	MsgVote            = 5; // peer 노드들에게 투표 요청을 보냄 (Candidate -> Follower)
+	MsgVoteResp        = 6; // MsgVote 응답 (Follower -> Candidate)
+	MsgSnap            = 7; // Follower에게 Snapshot을 보냄 (Leader -> Follower)
+	MsgHeartbeat       = 8; // peer 노드들에게 heartbeat을 보냄 (Leader -> Follower)
+	MsgHeartbeatResp   = 9; // MsgHeartbeat 메시지 응답 (Follower -> Leader)
+	MsgUnreachable     = 10; 
+	MsgSnapStatus      = 11; // Follower가 Snapshot을 적용하던 도중 오류가 발생하면 Leader에게 알림. 정상적으로 처리된 경우에는 MsgAppResq를 보냄 (Follower -> Leader)
+	MsgCheckQuorum     = 12;
+	MsgTransferLeader  = 13; // Leader에게 새로운 선거를 시작하자고 제안. Leader는 해당 peer 노드의 상태를 보고 MsgTimeout 메시지를 전달 (? -> Leader)
+	MsgTimeoutNow      = 14; // peer 노드에게 선거를 시작하라고 알림 (Leader -> ?)
+	MsgReadIndex       = 15; // Follower가 client's read request를 처리하기 위해 Leader에게 ReadIndex를 요청 (Follower -> Leader)
+	MsgReadIndexResp   = 16; // MsgReadIndex 응답 (Leader -> Follower)
+	MsgPreVote         = 17; // preVote 요청
+	MsgPreVoteResp     = 18; // preVote 응답
+}
+
+message Message {
+	optional MessageType type        = 1  [(gogoproto.nullable) = false];
+	optional uint64      to          = 2  [(gogoproto.nullable) = false];
+	optional uint64      from        = 3  [(gogoproto.nullable) = false];
+	optional uint64      term        = 4  [(gogoproto.nullable) = false];
+	optional uint64      logTerm     = 5  [(gogoproto.nullable) = false];
+	optional uint64      index       = 6  [(gogoproto.nullable) = false];
+	repeated Entry       entries     = 7  [(gogoproto.nullable) = false];
+	optional uint64      commit      = 8  [(gogoproto.nullable) = false];
+	optional Snapshot    snapshot    = 9  [(gogoproto.nullable) = false];
+	optional bool        reject      = 10 [(gogoproto.nullable) = false];
+	optional uint64      rejectHint  = 11 [(gogoproto.nullable) = false];
+	optional bytes       context     = 12;
+}
+```
+- [https://github.com/etcd-io/etcd/blob/master/raft/raftpb/raft.proto#L38](https://github.com/etcd-io/etcd/blob/master/raft/raftpb/raft.proto#L38)
+
+위와 같이 Raft 알고리즘을 구현하기 위한 모든 네트워크 작업과 내부에서 수행해야 하는 작업을 모두 raftpb.Message로 표현할 수 있다. raft.Node가 다른 peer 노드에게 전송할 메시지가 있다면 Message 버퍼에 저장되어있다가 Node.Ready() 채널을 통해 배치형식으로 Application에 전달된다. Application은 이 메시지들을 구현한 네트워크 계층을 통해 실제로 전송하게 된다. 마찬가지로 스토리지에 새로 커밋된 Entries를 적용해야 하거나 Snapshot을 적용해야할 때 unstable한 저장소에 저장해두었다가 Node.Ready() 채널을 통해 배치형식으로 Appication에 전달된다. 
+
+다음 코드는 raft 라이브러리를 활용한 예제인 [raftexample](https://github.com/etcd-io/etcd/blob/master/contrib/raftexample) 코드에서 raftpb.Message를 다른 노드로 전달하기 위해 수행된 콜스택이다. raftexample의 네트워크 계층은 etcd-server을 위한 http 구현체를 사용한다. 
+
+```go
+// https://github.com/etcd-io/etcd/blob/master/contrib/raftexample/raft.go#L459
+for {
+		select {
+		case <-ticker.C:
+			rc.node.Tick()
+		case rd := <-rc.node.Ready():
+			// ...
+			rc.transport.Send(rd.Messages) // raft.Node가 배치형식으로 전달한 메시지를 네트워크 계층을 통해 전송
+			// ...
+		case <-rc.stopc:
+			rc.stop()
+			return
+		}
+	}
+
+// https://github.com/etcd-io/etcd/blob/master/server/etcdserver/api/rafthttp/transport.go#L175
+func (t *Transport) Send(msgs []raftpb.Message) {
+	for _, m := range msgs {
+		// ...
+		to := types.ID(m.To)
+
+		t.mu.RLock()
+		p, pok := t.peers[to] // 네트워크 계층에서 관리하는 peers에서 m.To(id 값)에 해당하는 peer 검색
+		g, rok := t.remotes[to]
+		t.mu.RUnlock()
+
+		if pok {
+			// ...
+			p.send(m) // 해당 peer 에게 메시지 전송
+			continue
+		}
+    // ...
+	}
+}
+
+// https://github.com/etcd-io/etcd/blob/master/server/etcdserver/api/rafthttp/peer.go#L236
+func (p *peer) send(m raftpb.Message) {
+  // ...
+	writec, name := p.pick(m) // 실제 POST 요청 전송을 전담하는 고루틴으로 보낼 채널
+	select {
+	case writec <- m:
+	default:
+		// ...
+	}
+}
+
+// https://github.com/etcd-io/etcd/blob/master/server/etcdserver/api/rafthttp/pipeline.go#L92
+func (p *pipeline) handle() {
+	defer p.wg.Done()
+
+	for {
+		select {
+		case m := <-p.msgc:
+			start := time.Now()
+			err := p.post(pbutil.MustMarshal(&m)) // 실제 POST 요청
+			end := time.Now()
+			// ...
+		case <-p.stopc:
+			return
+		}
+	}
+}
+```
+
+## 
+
+## raft 구조체 (raft.go)
+
+## 
+
