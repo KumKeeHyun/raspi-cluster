@@ -40,9 +40,9 @@ Raft는 여러 머신에서 복제된 상태를 유지할 수 있게 하는 합�
 대부분의 Raft 구현은 Storage 처리, 로그 메시징 직렬화와 네트워크 전송등을 포함한 Monolithic 디자인을 갖고 있습니다. 대신 ETCD의 Raft 라이브러리는 Raft의 핵심 알고리즘만 구현하여 최소한의 디자인만 따릅니다. (역주: 스토리지, 네트워크 계층은 이 라이브러리를 사용하는 사용자가 구현해야 함.)
 
 ### Usage
-`etcd/raft/README.md#Usage`에 나와있는 예시 코드가 소스 코드와 다른 점이 있어서 소스 코드를 기준으로 몇가지 수정해서 작성했습니다.
+> `etcd/raft/README.md#Usage`에 나와있는 예시 코드가 소스 코드와 다른 점이 있어서 소스 코드를 기준으로 몇가지 수정해서 작성했습니다.
 
-1. Raft의 주요 Object인 Node를 생성, 시작
+#### 1. Raft의 주요 Object인 Node를 생성, 시작
 - 3개의 노드(id:1,2,3)로 구성된 클러스터를 초기화하는 경우
 ```go
   // raftLog(entries, snapshot을 관리하는 서장소)를 외부에서 주입 
@@ -95,13 +95,13 @@ Raft는 여러 머신에서 복제된 상태를 유지할 수 있게 하는 합�
   n := raft.RestartNode(c)
 ```
 
-2. 주기적으로 Node.Ready() 채널을 읽어서 스토리지를 업데이트하거나 네트워크를 통해 다른 노드로 메시지 전송
+#### 2. 주기적으로 Node.Ready() 채널을 읽어서 스토리지를 업데이트하거나 네트워크를 통해 다른 노드로 메시지 전송
     1. Entries, HardState, Snapshot 순서대로 영구적인 스토리지에 저장
     2. Messages에 있는 모든 메시지들을 네트워크 계층을 통해 지정된 노드로 전달 
     3. Snapshot이나 CommitedEntries가 있는 경우 state-machine에 적용
     4. Node.Advance()를 호출해서 다음 배치에 대한 준비 상태를 알림
 
-3. 주기적으로 Node.Tick()을 호출해서 HeartbeatTimeout, ElectionTimeout이 발생되도록 함
+#### 3. 주기적으로 Node.Tick()을 호출해서 HeartbeatTimeout, ElectionTimeout이 발생되도록 함
 
 ```go
 // Usage-2,3 을 통합한 코드
@@ -130,7 +130,7 @@ Raft는 여러 머신에서 복제된 상태를 유지할 수 있게 하는 합�
   }
 ```
 
-4. raft 모듈 외부에서 내부로 필요한 메시지를 전달
+#### 4. raft 모듈 외부에서 내부로 필요한 메시지를 전달
 - 네트워크 계층을 통해 다른 노드로부터 받은 메시지들은 Node.Step(ctx context.Context, m raftpb.Message)을 통해 모듈 내부로 전달
 ```go
   func recvRaftRPC(ctx context.Context, m raftpb.Message) {
@@ -146,6 +146,8 @@ Raft는 여러 머신에서 복제된 상태를 유지할 수 있게 하는 합�
   // 클러스터 구성 변경
   n.ProposeConfChange(ctx, cc)
 ```
+
+<br>
 
 ## 네트워크, 스토리지 계층과 raftpb.Message
 <img src="https://user-images.githubusercontent.com/44857109/112468548-bd501c00-8dab-11eb-8b63-bf461cde45e4.png" width="70%" height="70%">
@@ -329,11 +331,230 @@ func (n *node) run() {
 }
 ```
 
+<br>
+
 ## raft.Node가 raftpb.Message를 처리하는 방법
-이제 raft.Node가 Application 또는 다른 peer 노드와 어떻게 소통하는지 알았으면 이 메시지를 어떻게 처리하는지 알아봐야 한다. 수많은 타입의 raftpb.Message를 처리하는 함수는 raft.raft.Step(msg) 이다. 
+raft.Node가 Application 또는 다른 peer 노드와 어떻게 소통하는지 알아보았으니 이제 이 메시지를 어떻게 처리하는지 살펴봐야 한다. 수많은 타입의 raftpb.Message는 모두 raft.raft.Step(msg) 함수에서 처리된다. 
 
 > `raft.raft.Step`는 처음 raft(package 이름), 두번째 raft(object 이름)이 같아서 구분하기 위해 저렇게 표기했다. 다음부터는 `raft.Step`으로 표기할 것이다. 
 
+다음 코드는 모든 종류의 raftpb.Message가 raft 프로토콜을 수행하기 위해 raft.Step 함수를 호출하는 것을 보여준다.
 
-## 
+```go
+// https://github.com/etcd-io/etcd/blob/master/raft/node.go#L300
+func (n *node) run() {
+	// ...
+	for {
+		// ...
+		select {
+		case pm := <-propc:
+			m := pm.m
+			m.From = r.id
+			err := r.Step(m) // client write reqeust에 따라 생성된 proposal 메시지 
+			// ...
+		case m := <-n.recvc:
+			if pr := r.prs.Progress[m.From]; pr != nil || !IsResponseMsg(m.Type) {
+				r.Step(m) // 네트워크 계층을 통해 전달받은 메시지들
+			}
+		// ...
+	}
+}
 
+// https://github.com/etcd-io/etcd/blob/master/raft/raft.go#L645
+func (r *raft) tickElection() {
+	r.electionElapsed++
+
+	if r.promotable() && r.pastElectionTimeout() {
+		r.electionElapsed = 0
+		r.Step(pb.Message{From: r.id, Type: pb.MsgHup}) // 로컬 노드가 선거를 시작하도록 MsgHup 메시지를 생성한 후 바로 Step 함수를 통해 처리
+	}
+}
+```
+
+메시지가 client에 의해 생성되거나 네트워크 계층에서 전달받거나 같은 상황에 상관없이 모두 raft.Step 함수를 호출한다. 여기서 몇가지 의문이 생길 수 있다. raft 노드는 Leader, Candidate, Follower 상태에 따라 같은 메시지도 다르게 처리해야 하지만 그런 로직은 보이지 않고 무조건 하나의 함수를 호출하도록 추상화 되어있기 때문이다. ETCD는 이런 로직을 구현하기 위해서 각 상태에 따른 step 함수(소문자)를 따로 작성하고 이를 raft.Step 함수로 감싼다. 
+
+다음 코드는 각 상태에 따른 step 함수, 이를 래핑한 raft.Step 함수, raft.Step 함수가 어떻게 노드 상태에 따라 다른 step 함수를 호출하는지 보여준다.
+
+```go
+// https://github.com/etcd-io/etcd/blob/master/raft/raft.go#L983
+type stepFunc func(r *raft, m pb.Message) error // 각 상태에 따른 step 함수의 타입
+
+func stepLeader(r *raft, m pb.Message) error {
+	// ...
+}
+
+func stepFollower(r *raft, m pb.Message) error {
+	// ...
+}
+
+// --------------------------------------------------------
+
+// https://github.com/etcd-io/etcd/blob/master/raft/raft.go#L243
+type raft struct { // raft 프로토콜의 핵심 로직을 처리하는 object
+	// ...
+	step stepFunc // 특정 상태의 step 함수를 저장하는 변수
+	// ...
+}
+
+// https://github.com/etcd-io/etcd/blob/master/raft/raft.go#L680
+func (r *raft) becomeFollower(term uint64, lead uint64) { // Follower 상태로 전환하는 함수
+	r.step = stepFollower // r.step에 Follower 상태에서 메시지를 처리하는 함수를 등록
+	// ...
+}
+
+// https://github.com/etcd-io/etcd/blob/master/raft/raft.go#L718
+func (r *raft) becomeLeader() { // Leader 상태로 전환하는 함수
+	// ...
+	r.step = stepLeader // // r.step에 Leader 상태에서 메시지를 처리하는 함수를 등록
+	// ...
+}
+
+// -------------------------------------------------------- 
+
+// https://github.com/etcd-io/etcd/blob/master/raft/raft.go#L841
+func (r *raft) Step(m pb.Message) error {
+	// ...
+	switch m.Type { // Election에 관련된 메시지들은 따로 처리
+	case pb.MsgHup:
+		// ...
+
+	case pb.MsgVote, pb.MsgPreVote:
+		// ...
+		
+	default: // Election을 제외한 모든 타입의 메시지들
+		err := r.step(r, m) // r.step에 등록된 step 함수 호출
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+```
+
+함수형 프로그래밍 언어에서는 함수를 변수, 값으로 사용할 수 있다. stepLeader, stepFollower, stepCandidate 와 같은 함수들을 변수에 등록하고 raft.Step에서 자동으로 알맞은 함수를 호출하도록 하였다. 
+
+이런 문법은 tick을 구현하는 곳에도 적용되었다. Application(raft 모듈 외부)에서 일정 간격마다 raft.Node.Tick() 함수를 호출하도록 되어있는데 이때 raft.Node.Tick() 또한 같은 방법으로 tickElection(Follower, Candidate 상태일 때 등록), tickHeartbeat(Leader 상태일 때 등록) 를 호출하도록 되어있다.
+
+step 함수는 각 노드 상태의 main 함수라 생각해도 무방하다. step 함수는 switch-case 문, 메시지 타입에 따라 처리할 로직들로 구성되어있다. 각 case문을 한번에 살펴보는 것은 너무 복잡해지기 때문에 raft 프로토콜의 핵심적인 흐름을 하나하나 뜯어서 살펴보려 한다.
+
+<br>
+
+## raft.Node가 네트워크 계층을 통해 전송할 raftpb.Message를 Application에게 전달하는 방법
+Raft 프로토콜 구현을 위한 핵심 로직을 보기전에 살펴볼 것이 하나 남아있다. 바로바로 raft 모듈이 peer 노드로 전달할 메시지를 Application에게 전달하는 방법이다. 메시지들은 앞서 설명했던 것처럼 버퍼에 저장되어있다가 Node.Ready() 을 통해 배치형식으로 전달된다. 이에 관련된 함수들을 살펴보자.
+
+```go
+// https://github.com/etcd-io/etcd/blob/master/raft/raft.go#L243
+type raft struct { // raft 프로토콜의 핵심 로직을 처리하는 object
+	// ...
+	msgs []pb.Message // 외부로 전달할 메시지 버퍼
+	// ...
+}
+
+// https://github.com/etcd-io/etcd/blob/master/raft/raft.go#L386
+func (r *raft) send(m pb.Message) {
+	if m.From == None {
+		m.From = r.id
+	}
+	// ...
+	r.msgs = append(r.msgs, m) // 버퍼에 메시지 추가
+}
+
+// -------------------------------------------------------- 
+
+// https://github.com/etcd-io/etcd/blob/master/raft/node.go#L559
+func newReady(r *raft, prevSoftSt *SoftState, prevHardSt pb.HardState) Ready {
+	rd := Ready{
+		Entries:          r.raftLog.unstableEntries(),
+		CommittedEntries: r.raftLog.nextEnts(),
+		Messages:         r.msgs, // 배치로 전달할 object에 r.msgs 넣기
+	}
+	// ...
+	return rd
+}
+
+// https://github.com/etcd-io/etcd/blob/master/raft/rawnode.go#L140
+func (rn *RawNode) acceptReady(rd Ready) {
+	// ...
+	rn.raft.msgs = nil // 배치로 전달한 메시지들이 Application에서 모두 처리되었다면 (Application Loop에서 Node.Advance 함수 호출)
+					   // 메시지 버퍼 비우기
+}
+```
+
+raft.raft object에는 다른 peer 노드에게 전송할 메시지들을 임시로 저장해두는 버퍼 필드([]raftpb.Message)가 있다. raft.Step을 통해 여러 메시지를 처리하는 도중에 특정한 작업을 수행하기 위해 메시지를 전송해야 하는 경우(ex: 선거에서 투표를 요청할 때) send 함수를 통해 버퍼에 메시지를 추가한다. 버퍼에 저장된 메시지들은 배치형식으로 Ready 구조체에 담겨 Application으로 전달되는데 이때 Ready.Messages 필드에 메시지들을 담아서 전달한다. 이후 Application Loop에서 Ready에 대한 모든 작업(안정적인 저장소에 메타데이터 저장, CommitedEntries 적용, Snapshot 적용, 다른 peer에게 메시지 전송 등)을 수행하고 다음 배치를 받기 위해 Node.Advance() 를 호출하면 acceptReady() 를 통해서 메시지 버퍼가 비워지는 방식이다.
+
+raft.Node가 배치형식으로 데이터를 Application에 전달하고 외부에서 들어오는 메시지를 처리하는 내부 로직은 차근차근 빌드업을 모두 마친뒤에 설명하려고 한다.
+
+메시지를 전송할 때 send 함수를 이용하는 것을 보았지만 이 함수만으로는 불편한 것이 있다. 예를 들어 모든 peer에게 특정 메시지를 전달하는 작업은 많이 반복되는 작업이기 때문에 이를 도와주는 몇가지 함수들이 있다.
+
+```go
+// https://github.com/etcd-io/etcd/blob/master/raft/raft.go#L423
+func (r *raft) sendAppend(to uint64) { // appendEntries 작업을 래핑
+	r.maybeSendAppend(to, true)
+}
+
+// https://github.com/etcd-io/etcd/blob/master/raft/raft.go#L494
+func (r *raft) sendHeartbeat(to uint64, ctx []byte) { // heartbeat 작업을 래핑
+	commit := min(r.prs.Progress[to].Match, r.raftLog.committed)
+	m := pb.Message{
+		To:      to,
+		Type:    pb.MsgHeartbeat,
+		Commit:  commit,
+		Context: ctx,
+	}
+	r.send(m)
+}
+
+// https://github.com/etcd-io/etcd/blob/master/raft/raft.go#L515
+func (r *raft) bcastAppend() { // 모든 peer 노드들에게 appendEntires 작업 수행
+	r.prs.Visit(func(id uint64, _ *tracker.Progress) {
+		if id == r.id {
+			return
+		}
+		r.sendAppend(id)
+	})
+}
+
+
+// https://github.com/etcd-io/etcd/blob/master/raft/raft.go#L534
+func (r *raft) bcastHeartbeatWithCtx(ctx []byte) { // 모든 peer 노드들에게 heartbeat 작업 수행
+	r.prs.Visit(func(id uint64, _ *tracker.Progress) {
+		if id == r.id {
+			return
+		}
+		r.sendHeartbeat(id, ctx)
+	})
+}
+```
+
+위와 같이 appendEntries, heartbeat 와 이 것들을 브로드캐스트하는 작업은 한번더 래핑이 되어있다. 함수 기능 자체는 어려울 것이 없지만 함수형 프로그래밍의 기법이 들어가있어서 한번 짚고 넘어가려 한다.
+
+bcastAppend 함수를 보면 반복문이 아닌 r.prs.Visit 함수를 호출하고 있다. r.prs는 클러스터를 구성하는 peer들을 관리하는 object이다. 로그 복제 진행 상황, 스냅샷 전송 여부 같은 정보를 기록하는 등의 작업을 수행한다. prs.Visit 함수는 모든 peer에 대해서 특정한 작업을 수행하도록 내부에서 반복문을 돌고 수행할 작업을 주입받는다. 모든 peer에게 같은 일을 수행해야 하는 작업를 추상화한 것이다. ETCD는 이러한 추상화를 통해서 bcastAppend, bcastHeartbeat 뿐만 아니라 peer들의 복제 진행 상황 초기화, 클러스터 구성 초기화 등의 작업을 수행한다.
+
+다음 코드는 간단한 예제를 만든 것이다.
+
+```go
+// 실제 코드는 차이가 있습니다.
+type ProgressTracker struct {
+	peers map[uint64]*Progress
+}
+
+func (prs *ProgressTracker) Visit(task func (id uint64, p *Progress)) {
+	for pID, p := range prs.peers {
+		task(pID, p)
+	}
+}
+```
+
+<br>
+
+## Leader 선출 처리 과정
+
+
+<br>
+
+## 로그 복제 처리 과정
+
+
+<br>
+
+## raft.Node에서 채널 이벤트 기반으로 오케스트레이션 하기
