@@ -171,7 +171,7 @@ enum MessageType {
 	MsgHeartbeat       = 8; // peer 노드들에게 heartbeat을 보냄 (Leader -> Follower)
 	MsgHeartbeatResp   = 9; // MsgHeartbeat 메시지 응답 (Follower -> Leader)
 	MsgUnreachable     = 10; 
-	MsgSnapStatus      = 11; // Follower가 Snapshot을 적용하던 도중 오류가 발생하면 Leader에게 알림. 정상적으로 처리된 경우에는 MsgAppResq를 보냄 (Follower -> Leader)
+	MsgSnapStatus      = 11; // Follower가 Snapshot을 적용하던 도중 오류가 발생하면 Leader에게 알림. 정상적으로 처리된 경우에는 MsgAppResp를 보냄 (Follower -> Leader)
 	MsgCheckQuorum     = 12;
 	MsgTransferLeader  = 13; // Leader에게 새로운 선거를 시작하자고 제안. Leader는 해당 peer 노드의 상태를 보고 MsgTimeout 메시지를 전달 (? -> Leader)
 	MsgTimeoutNow      = 14; // peer 노드에게 선거를 시작하라고 알림 (Leader -> ?)
@@ -274,7 +274,7 @@ func (p *pipeline) handle() { // pipeline을 담당하는 고루틴
 ```go
 // https://github.com/etcd-io/etcd/blob/master/contrib/raftexample/raft.go#L479
 func (rc *raftNode) serveRaft() {
-  // ...
+	// ...
 	err = (&http.Server{Handler: rc.transport.Handler()}).Serve(ln) // 네트워크 계층을 구현한 HTTP Server 시작
 	// ...
 }
@@ -282,10 +282,10 @@ func (rc *raftNode) serveRaft() {
 // https://github.com/etcd-io/etcd/blob/master/server/etcdserver/api/rafthttp/transport.go#L157
 func (t *Transport) Handler() http.Handler {
 	pipelineHandler := newPipelineHandler(t, t.Raft, t.ClusterID) // http.Handler(ServeHTTP) 인터페이스를 구현한 구조체 
-  // ...
+	// ...
 	mux := http.NewServeMux()
 	mux.Handle(RaftPrefix, pipelineHandler)
-  // ...
+	// ...
 	return mux
 }
 
@@ -300,12 +300,12 @@ func (h *pipelineHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// ...
 		return
 	}
-  // ...
+	// ...
 	if err := h.r.Process(context.TODO(), m); err != nil { // raft 모듈로 메시지 전달
 		// ...
 		return
 	}
-  // ...
+	// ...
 }
 
 // https://github.com/etcd-io/etcd/blob/master/contrib/raftexample/raft.go#L499
@@ -321,11 +321,11 @@ func (n *node) run() {
 		select {
 		// ...
 		case m := <-n.recvc:
-      // 적절하지 않은 메시지 필터링
+			// 적절하지 않은 메시지 필터링
 			if pr := r.prs.Progress[m.From]; pr != nil || !IsResponseMsg(m.Type) {
 				r.Step(m) // 실제 raft 모듈이 메시지를 처리하도록 전달
 			}
-    // ...
+    	// ...
 		}
 	}
 }
@@ -431,7 +431,7 @@ func (r *raft) Step(m pb.Message) error {
 }
 ```
 
-함수형 프로그래밍 언어에서는 함수를 변수, 값으로 사용할 수 있다. stepLeader, stepFollower, stepCandidate 와 같은 함수들을 변수에 등록하고 raft.Step에서 자동으로 알맞은 함수를 호출하도록 하였다. 
+함수형 프로그래밍 언어에서는 함수를 변수, 값으로 사용할 수 있다. stepLeader, stepFollower, stepCandidate 와 같은 함수들을 변수에 등록하고 raft.Step에서 자동으로 알맞은 함수를 호출하도록 했다. 
 
 이런 문법은 tick을 구현하는 곳에도 적용되었다. Application(raft 모듈 외부)에서 일정 간격마다 raft.Node.Tick() 함수를 호출하도록 되어있는데 이때 raft.Node.Tick() 또한 같은 방법으로 tickElection(Follower, Candidate 상태일 때 등록), tickHeartbeat(Leader 상태일 때 등록) 를 호출하도록 되어있다.
 
@@ -530,17 +530,17 @@ func (r *raft) bcastHeartbeatWithCtx(ctx []byte) { // 모든 peer 노드들에�
 
 bcastAppend 함수를 보면 반복문이 아닌 r.prs.Visit 함수를 호출하고 있다. r.prs는 클러스터를 구성하는 peer들을 관리하는 object이다. 로그 복제 진행 상황, 스냅샷 전송 여부 같은 정보를 기록하는 등의 작업을 수행한다. prs.Visit 함수는 모든 peer에 대해서 특정한 작업을 수행하도록 내부에서 반복문을 돌고 수행할 작업을 주입받는다. 모든 peer에게 같은 일을 수행해야 하는 작업를 추상화한 것이다. ETCD는 이러한 추상화를 통해서 bcastAppend, bcastHeartbeat 뿐만 아니라 peer들의 복제 진행 상황 초기화, 클러스터 구성 초기화 등의 작업을 수행한다.
 
-다음 코드는 간단한 예제를 만든 것이다.
+다음 코드는 간단한 예제입니다.
 
 ```go
-// 실제 코드는 차이가 있습니다.
+// 실제 코드와는 차이가 있습니다.
 type ProgressTracker struct {
 	peers map[uint64]*Progress
 }
 
 func (prs *ProgressTracker) Visit(task func (id uint64, p *Progress)) {
-	for pID, p := range prs.peers {
-		task(pID, p)
+	for pID, pr := range prs.peers {
+		task(pID, pr)
 	}
 }
 ```
@@ -548,7 +548,217 @@ func (prs *ProgressTracker) Visit(task func (id uint64, p *Progress)) {
 <br>
 
 ## Leader 선출 처리 과정
+지금까지 ETCD의 raft 라이브러리가 스토리지, 네트워크 게층과 소통하는 방법, raft 프로토콜 구현에 필요한 로직을 raftpb.Message로 추상화하고 메시지가 처리되기까지의 과정을 살펴보았다. 이제 메시지들에 의해 raft 프로토콜이 작동하는 방법만 알아보면 된다. 모든 메시지를 살펴보기엔 무리가 있기 때문에 리더 선출(MsgHup, MsgVote, MsgVoteResp)과 로그 복제(MsgProp, MsgApp, MsgAppResp, MsgHeartbeat, MsgHeartbeatResp)만 흐름에 따라 살펴볼 것이다.
 
+
+### 1. ElectionTimeout 발생
+모든 raft 노드는 Follower 상태로 시작한다. Leader가 발견되지 않는 상태에서 주기적으로 raft.Node.Tick()에 의해 raft.tickElection() 이 호출되면, Follower는 결국 `ElectionTimeout`이 발생하고 Candidate 상태로 올라가기 위해 `MsgHup` 메시지를 생성하게 된다. 
+
+> ETCD Raft 라이브러리는 ElectionTimeout을 물리적인 시간에 따라 직접적으로 호출하지 않고 `ElectionElapsed` 라는 논리적인 시간 개념을 통해 발생시킨다. 주기적으로 호출되는 tick 함수에서 ElectionElapsed를 증가시키고 이때 증가된 값이 일정 값보다 크다면 Timeout으로 판단하는 방식이다.
+
+```go
+// https://github.com/etcd-io/etcd/blob/master/raft/raft.go#L645
+func (r *raft) tickElection() {
+	r.electionElapsed++
+
+	if r.promotable() && r.pastElectionTimeout() {
+		r.electionElapsed = 0
+		r.Step(pb.Message{From: r.id, Type: pb.MsgHup})
+	}
+}
+```
+
+### 2. Step 함수에서 hup 함수 호출
+raft.Step 함수는 메시지가 생성되었던 시점의 Term과 그 메시지를 처리하는 노드의 Term을 비교해서 상황에 따라 몇가지 작업을 한뒤에 step 함수들(stepLeader, stepCandidate, stepFollower)을 통해 특정한 작업을 수행한다. 이때 step 함수로 처리하지 않는 예외적인 메시지가 있는데 MsgHup(campaign 시작하는 메시지), MsgVote(투표를 요청하는 메시지)이다. 
+
+raft.hup 함수는 현재 자신의 노드가 Candidate가 될 수 있는 상태인지 확인하는 과정을 거치고 최종적으로 campaign 함수를 호출한다. 만약 자신의 로그에서 커밋되었지만 state-machine에 적용되지 않은 entries중에 snapshot, configChange 가 있다면 선거를 시작할 수 없다.
+
+```go
+// https://github.com/etcd-io/etcd/blob/master/raft/raft.go#L917
+func (r *raft) Step(m pb.Message) error {
+	// Handle the message term, which may result in our stepping down to a follower.
+	switch {
+	case m.Term == 0:
+		// local message
+	case m.Term > r.Term:
+		// ...
+	case m.Term < r.Term:
+		// ...
+	}	
+
+	switch m.Type {
+	case pb.MsgHup:
+		if r.preVote {
+			r.hup(campaignPreElection)
+		} else {
+			r.hup(campaignElection) // <=== hup 함수 호출!!!!!!
+		}
+
+	case pb.MsgVote, pb.MsgPreVote: // 해당 노드에게 투표를 할지 안할지 결정한 후에 MsgVoteResp 메시지 전송
+		// ...
+
+	default:
+		err := r.step(r, m) // 대부분의 메시지가 여기서 처리됨
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// https://github.com/etcd-io/etcd/blob/master/raft/raft.go#L754
+func (r *raft) hup(t CampaignType) {
+	// ...
+	// 현재 이 노드가 선거를 시작할 수 있는 상태인지 검사
+	// 로그에 configChange entry나 snapshot entry가 대기중인 경우 선거 시작을 거부
+
+	r.campaign(t) // 실제 선거 시작
+}
+```
+
+### 3. campaign 함수 동작
+campaign 함수의 동작은 어렵지 않다. 노드의 상태를 Candidate로 전환하고 자신에게 먼저 투표한 다음, 투표할 수 있는 노드들에게 투표를 요청하는 메시지를 전송한다. 
+
+> ETCD Raft 라이브러리는 preVote, vote 두가지 기능을 모두 지원하지만 preVote는 안보고 넘어가려합니다.
+
+이 라이브러리는 앞서 설명했던 것처럼 네트워크 계층과 분리되어있기 때문에 모든 네트워크 작업은 비동기적으로 작동한다. 노드는 이후에 MsgVote 메시지들이 Node.Ready()를 통해 Application으로 전달되고, 네트워크 계층을 통해 다른 노드로 전달되고, MsgVoteResp 메시지를 네트워크 계층을 통해 전달받을 때까지 기다리지 않는다. 그냥 다른 메시지를 처리하고 있다가 나중에 MsgVoteResp 메시지가 도착하면 그떄 메시지를 알맞게 처리할 뿐이다. 이러한 작업이 오히려 로직의 복잡성을 줄이고 동시성 처리를 쉽게 해주는 것 같다.
+
+```go
+// https://github.com/etcd-io/etcd/blob/master/raft/raft.go#L779
+func (r *raft) campaign(t CampaignType) {
+	// ...
+	// 안전을 위해 적용해야 할 snapshot 이 있는지 한번더 검사 
+
+	var term uint64
+	var voteMsg pb.MessageType
+	if t == campaignPreElection {
+		// ...
+	} else {
+		r.becomeCandidate() // Candidate 상태로 전환 (tick, step 함수 등록, 새로운 term에 맞게 노드 상태 초기화)
+		voteMsg = pb.MsgVote
+		term = r.Term
+	}
+
+	// 먼저 자신에게 투표함 (r.poll 함수는 다음에 설명함)
+	if _, _, res := r.poll(r.id, voteRespMsgType(voteMsg), true); res == quorum.VoteWon {
+		// 클러스터에 노드가 자신밖에 없는 경우 MsgVote 를 전송하고 
+		// MsgVoteResp 를 기다리는 작업을 수행할 필요가 없음. 바로 다음 작업으로 이동함.
+		if t == campaignPreElection {
+			r.campaign(campaignElection)
+		} else {
+			r.becomeLeader() // Leader 상태로 전환
+		}
+		return
+	}
+
+	// 현재 클러스터에 있는 노드들중에 투표할 수 있는 노드들의 id를 구함
+	var ids []uint64
+	{
+		idMap := r.prs.Voters.IDs()
+		ids = make([]uint64, 0, len(idMap))
+		for id := range idMap {
+			ids = append(ids, id)
+		}
+		sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	}
+
+	// 노드들에게 MsgVote 메시지 전송. 이후 해당 노드들은 MsgVoteResp를 이 노드에게 전송함.
+	// MsgVoteResp를 받은 이 노드는 받은 투표수를 확인한 후 Leader 상태로 올라갈지 결정함.
+	for _, id := range ids {
+		if id == r.id {
+			continue
+		}
+		// ...
+		r.send(pb.Message{Term: term, To: id, Type: voteMsg, Index: r.raftLog.lastIndex(), LogTerm: r.raftLog.lastTerm(), Context: ctx})
+	}
+}
+```
+
+### 4. MsgVote를 받은 다른 노드들의 동작
+raft 라이브러리를 사용하는 Application은 네트워크 계층을 통해 받은 메시지를 라이브러리 내부 로직에게 전달할 의무가 있다. 앞서서 이 메시지는 raft.Node 내부에서 raft.Step 에 의해 처리되는 것을 확인했기 때문에 raft.Step에서 해당 메시지를 처리하는 것만 보면 된다. 
+
+MsgVote의 처리 동작도 복잡하지 않다. 자신이 현재 Term에서 누구에게 투표했는지 현황과 Candidate 로그의 진행상태를 확인하고 MsgVoteResp 메시지를 reject 여부 정보를 담아서 전송한다.
+
+```go
+// https://github.com/etcd-io/etcd/blob/master/raft/raft.go#L924
+func (r *raft) Step(m pb.Message) error {
+	// ...
+
+	switch m.Type {
+	case pb.MsgHup:
+		// ...
+
+	case pb.MsgVote, pb.MsgPreVote:
+		// 해당 노드에게 투표할 수 있는지 확인
+		canVote := r.Vote == m.From || // 이미 해당 노드에게 투표를 한 경우(raft의 모든 네트워크 요청을 멱등성을 보장해야 함)
+			(r.Vote == None && r.lead == None) || // 아직 아무에게도 투표하지 않았고 현재 Term에서 따로 알고있는 Leader가 없는 상태
+			(m.Type == pb.MsgPreVote && m.Term > r.Term)
+
+		// Candidate의 로그가 자신보다 최신인지 검사후 해당 노드에게 투표함
+		if canVote && r.raftLog.isUpToDate(m.Index, m.LogTerm) {
+			// ...
+
+			// Candidate 노드에게 grant 의미로 MsgVoteResp 전송
+			r.send(pb.Message{To: m.From, Term: m.Term, Type: voteRespMsgType(m.Type)})
+			if m.Type == pb.MsgVote {
+				// Only record real votes.
+				r.electionElapsed = 0
+				r.Vote = m.From
+			}
+		} else {
+			// ...
+
+			// 투표할 수 없다면 reject 의미로 MsgVoteResp 전송
+			r.send(pb.Message{To: m.From, Term: r.Term, Type: voteRespMsgType(m.Type), Reject: true})
+		}
+
+	default:
+		err := r.step(r, m)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+```
+
+### 5. MsgVoteResp를 받은 Candidate 노드의 동작
+이전에 campaign 함수를 통해 보냈던 MsgVote에 대한 응답 메시지가 도착했다면 선거 투표 현황을 업데이트하고, 선거 결과에 따라 Leader 상태로 올라간다. 
+
+만약 이 선거에서 이기지 못한 경우, 노드는 Candidate 상태에서 주기적으로 tick이 발생하고 른 노드또한 다들로 부터 온 메시지를 처리한다.  tickElection에 의해 다시 선거를 시작하거나, 선거에서 이긴 다른 노드에게 MsgApp 메시지를 받아 Follower 상태로 내려가게 된다.
+
+```go
+// https://github.com/etcd-io/etcd/blob/master/raft/raft.go#L1393
+func stepCandidate(r *raft, m pb.Message) error {
+	// Candidate 선거 타입에 따라 VoteResp 타입 설정
+	var myVoteRespType pb.MessageType
+	if r.state == StatePreCandidate {
+		myVoteRespType = pb.MsgPreVoteResp
+	} else {
+		myVoteRespType = pb.MsgVoteResp
+	}
+
+	switch m.Type {
+	// ...
+	case myVoteRespType: // MsgVoteResp
+		gr, rj, res := r.poll(m.From, m.Type, !m.Reject) // 응답 메시지에 따라 선거 투표 현황 업데이트
+		
+		switch res {
+		case quorum.VoteWon: // 만약 투표에서 이겼다면
+			if r.state == StatePreCandidate {
+				r.campaign(campaignElection)
+			} else {
+				r.becomeLeader() // Leader 상태로 전환
+				r.bcastAppend() // 모든 노드들에게 리더가 된 것을 알리고, 로그를 복제하기 위한 MsgApp 메시지 전송
+			}
+		case quorum.VoteLost:
+			r.becomeFollower(r.Term, None)
+		}
+	// ...
+	return nil
+}
+```
 
 <br>
 
