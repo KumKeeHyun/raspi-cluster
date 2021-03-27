@@ -13,6 +13,10 @@
 ### 간단하게 Raft란?
 Raft는 여러 머신에서 복제된 상태를 유지할 수 있게 하는 합의 알고리즘입니다. Raft는 state-machine 자체를 복제하는 것이 아니라 state-machine에 적용할 변동사항을 로그형태로 관리하고 이 로그를 복제합니다. 모든 데이터의 흐름(복제)은 Leader에서 Follower로 흐릅니다. 한 논리적인 클러스터에서 Leader는 1개만 존재하고 Leader가 사라지면 여러 Follower들중 한 Follower가 Election을 시작하면서 Candidate가 되고 선거에서 이기면 최종적으로 Leader가 됩니다.
 
+- Raft 설명 자료
+	- [In Search of an Understandable Consensus Algorithm 논문 PDF](https://raft.github.io/raft.pdf)
+	- [Raft 동작 설명 Medium 글](https://codeburst.io/making-sense-of-the-raft-distributed-consensus-algorithm-part-1-3ecf90b0b361)
+
 ## ETCD Raft Readme
 
 ### Features
@@ -766,7 +770,7 @@ func stepCandidate(r *raft, m pb.Message) error {
 ## 로그 복제 처리 과정
 마지막으로 살펴볼 것은 로그를 복제하는 과정이다. 이 과정은 리더 선출처럼 하나의 줄기로만 처리되지 않고 여러개의 작은 흐름에 의해 처리되기 때문에 좀 복잡하다. 원활한 이해를 위해 여러 흐름중에서도 가장 핵심적인 흐름 하나만 골라서 콜스택을 따라갈 것이다. 로그에 새로운 entry를 추가하고, 복제를 위해 entries를 다른 노드에게 전송하고, 과반수로 복제가 이루어진 entires들이 commit되는 흐름을 살펴보자. 
 
-### 1. state-machine에 쓰기 작업을 하기 위해 새로운 변동 사항을 Raft 클러스터에 제안
+### 1. 새로운 변동 사항을 Raft 클러스터에 제안
 새로운 변동 사항을 클러스터에 제안한다는 식으로 말은 어렵지만 결국 Raft가 관리하는 로그에 새로운 Entry를 추가한다는 말이다. 
 
 Application이 client 요청에 따라 새로운 entry를 추가하고 싶다면, raft.Node.Propose 함수를 통해 MsgProp 메시지를 생성하고 raft.Step 함수에서 처리될 수 있도록 해야한다. 기본적으로 Raft 알고리즘에서 모든 데이터 흐름은 Leader -> Follower 로 흐르기 때문에 모든 Proposal은 리더에서 수행되어야 한다. 
@@ -851,9 +855,9 @@ func stepFollower(r *raft, m pb.Message) error {
 ```
 
 ### 2. MsgApp을 받은 Follower 노드의 동작
-이 동작은 아주 간단하다. 우선 tick에 의해 electionTimeout이 발생하지 않도록 electionElapsed를 초기화한다. 그리고 전달된 Entries가 자신의 로그에 추가할 수 있는지 검사하고, 결과에 따라 로그를 업데이트한다. 만약 Entries가 거부된 경우에는 Leader가 자신의 로그 상태를 잘못 추적하고 있다는 뜻이기 때문에 바로잡을 수 있는 정보를 MsgAppResp에 담아서 전송한다.
+이 동작은 아주 간단하다. 우선 tick에 의해 electionTimeout이 발생하지 않도록 electionElapsed를 초기화한다. 그리고 전달된 Entries를 자신의 로그에 추가할 수 있는지 검사하고, 결과에 따라 로그를 업데이트한다. 만약 Entries가 거부된 경우에는 Leader가 자신의 로그 상태를 잘못 추적하고 있다는 뜻이기 때문에 바로잡을 수 있는 정보 `RejectHint`를 MsgAppResp에 담아서 전송한다.
 
-또한 Leader의 CommittedIndex를 자신의 로그에 적용한다.
+이어서 Leader의 CommittedIndex를 자신의 로그에 적용한다.
 
 ```go
 // https://github.com/etcd-io/etcd/blob/master/raft/raft.go#L1427
@@ -1007,7 +1011,7 @@ func stepLeader(r *raft, m pb.Message) error {
 
 ### 4. Leader가 Follower의 로그 복제 상황을 빠르게 수정하는 방법
 
-새로 선출된 Leader는 Follower들의 진행 상태를 `MatchIndex = 0`, `NextIndex = lastLogIndex`로 설정한다. Follower의 상태를 알지 못하기 때문에 Progress를 StateProbe 상태로 설정해두고 MsgHeartbeat 메시지를 보내면서 진행 상황을 조사합니다. 이때 단순하게 NextIndex를 일정 수준씩 감소시키면서 찾게 되면 로그 상태에 따라 너무 많은 시간이 걸릴 수 있습니다. ETCD 구현은 Follower의 `RejectHint`와 Leader의 `findConflictByTerm`을 통해 최대 2번의 메시지 교환을 통해 진행 상황을 조사할 수 있습니다.
+새로 선출된 Leader는 Follower들의 진행 상태를 `MatchIndex = 0`, `NextIndex = lastLogIndex`로 설정합니다. Follower의 상태를 알지 못하기 때문에 Progress를 StateProbe 상태로 설정해두고 MsgHeartbeat 메시지를 보내면서 진행 상황을 조사합니다. 이때 단순하게 NextIndex를 일정 수준씩 감소시키면서 찾게 되면 로그 상태에 따라 너무 많은 시간이 걸릴 수 있습니다. ETCD 구현은 Follower의 `RejectHint`와 Leader의 `findConflictByTerm`을 통해 최대 2번의 메시지 교환을 통해 진행 상황을 조사할 수 있습니다.
 
 #### case 1
 
@@ -1050,7 +1054,6 @@ Leader의 `findConflictByTerm`는 이러한 로직으로 수행된다.
 
 이처럼 Leader의 노력에도 불구하고 옳바른 NextIndex를 찾기위해 Reject 당할 로그 복제 메시지를 반복해서 전송하게 된다. `3`의 상황에서 Leader가 보낸 로그 복제 메시지를 통해 Follower는 'Leader의 로그에서 `Index=8` Entry의 Term이 3 이기 때문에 그 이전의 Entries 또한 Term이 3보다 같거나 작을 것' 이라는 정보를 얻을 수 있다. 따라서 Follower는 자신의 로그에서 Term이 3보다 작거나 같은 Entry(`Index=3, Term=3`)를 RejectHint로 사용하는 방식으로 최적화할 수 있다. 수정된 상황에서 로그 복제 진행은 다음과 같다.
 
-
 1. Leader는 `Index=9, Term=7` 으로 로그 복제 메시지를 전송한다. 
 2. Follower의 로그는 `Index=9` Entry의 Term이 6 이기 때문에 로그 복제가 일치하지 않다고 판단하고, `Index=9, Term=6`를 RejectHint로 Leader에게 전달한다.
 3. Leader는 `findConflictByTerm`을 이용해서 `Term=6` 보다 작거나 같은 Entry인 `Index=8, Term=3`을 찾고 이 정보로 로그 복제 메시지를 전송한다.
@@ -1062,8 +1065,203 @@ Leader의 `findConflictByTerm`는 이러한 로직으로 수행된다.
 <br>
 
 ## raft.Node에서 채널 이벤트 기반으로 오케스트레이션 하기
+Raft 프로토콜의 핵심 로직을 구현한 `raft.go`을 읽으면 동시성 처리를 위한 Lock 처리가 하나도 없는 것을 알 수 있다. 즉 raft.go에 있는 코드들은 동시에 실행되지 않는다. 하지만 첫 부분에서 설명한 것처럼 raft.Node object는 외부로 raftpb.Message를 전달하면서, 주기적으로 Tick에 대한 기능도 수행해야 하고, client의 요청에 따라 새로운 제안 사항을 로그에 추가시켜야 한다. ETCD 구현은 이 모든 작업을 하나의 Goroutine에서 채널 이벤트 기반으로 수행한다. 
 
+```go
+// https://github.com/etcd-io/etcd/blob/master/raft/node.go#L300
+func (n *node) run() {
+	var propc chan msgWithResult
+	var readyc chan Ready
+	var advancec chan struct{}
+	var rd Ready
+
+	r := n.rn.raft
+	lead := None
+
+	for {
+		if advancec != nil { 
+			// Application Loop에서 아직 Node.Advance()를 호출하지 않은 경우
+			// 즉 App이 아직 이전에 보냈던 Ready를 모두 수행하지 않아서 다음 Ready를 받을 준비가 안된 경우
+			// readyc = nil 을 통해서 case readyc <- rd: 이 수행되지 않도록 한다.
+			readyc = nil
+		} else if n.rn.HasReady() {
+			// Application Loop에서 다음 Ready를 받을 준비가 되었고
+			// Raft 모듈 또한 외부로 전달할 변동사항이 있는 경우
+			// readyc = n.readyc 을 통해 외부로 Ready를 전달할 수 있도록 한다.
+			rd = n.rn.readyWithoutAccept()
+			readyc = n.readyc
+		}
+
+		// readyc와 같은 메커니즘으로 propc를 적절한 값으로 설정한다.
+		if lead != r.lead {
+			if r.hasLeader() {
+				// ...
+				propc = n.propc
+			} else {
+				propc = nil
+			}
+			lead = r.lead
+		}
+
+		// 이벤트 처리 select 문
+		select {
+		case pm := <-propc:
+			m := pm.m
+			m.From = r.id
+			err := r.Step(m)
+			if pm.result != nil {
+				pm.result <- err
+				close(pm.result)
+			}
+		case m := <-n.recvc:
+			if pr := r.prs.Progress[m.From]; pr != nil || !IsResponseMsg(m.Type) {
+				r.Step(m)
+			}
+		case cc := <-n.confc:
+			// ...
+		case <-n.tickc:
+			n.rn.Tick()
+		case readyc <- rd:
+			n.rn.acceptReady(rd)
+			advancec = n.advancec
+		case <-advancec:
+			n.rn.Advance(rd)
+			rd = Ready{}
+			advancec = nil
+		case c := <-n.status:
+			c <- getStatus(r)
+		case <-n.stop:
+			close(n.done)
+			return
+		}
+	}
+}
+```
+
+> `go-ethereum`도 메인 루프가 이런 형식으로 되어있는 것으로 알고있다.
+
+
+이벤트 루프에서 `readyc`만 추가적으로 보고 넘어가야 한다. 상식적으로 외부로 Ready를 보낼 준비가 되었다면 바로 `n.readyc <- rd` 를 수행해서 바로바로 Ready를 전달해야 한다. 하지만 위 코드에서는 `readyc = n.readyc` 로 그저 select-case 문을 통해 Ready를 보낼 수 있도록 준비만 하고 있다. 따라서 채널을 준비했다고해서 해당 루프에서 바로 Ready가 보내지는 것이 아니다. 이것은 Ready가 한번 보내질 때 최대한 덜 자주, 많은 정보를 포함한 상태로 App에 전달하기 위해서 일부러 이렇게 설계한 것이다.
+
+
+### Chan 을 이용한 몇가지 패턴
+진짜 마지막으로 raft.Node.run의 이벤트 루프에 사용된 몇가지 패턴을 살펴보자.
+
+#### select case
+select-case 문에는 수신 채널 작업 이외에도 송신 채널 작업을 등록할 수 있다. 만약 다른 모든 case문들의 수신 채널이 준비되지 않았을 때, 송신하는 case문이 실행된다. 이때 송신할 채널이 nil이라면 해당 case문은 실행되지 않는다.
+
+```go
+func main() {
+	nodeReq := make(chan string) // 실제로 Application에 전달할 채널
+	var req chan string          // nodeReq를 가리킬 채널
+	isReady := false
+
+	go func() {
+		readyTick := time.NewTicker(3 * time.Second) // 3초마다 nodeReq 채널 준비
+		for range readyTick.C {
+			isReady = true
+		}
+	}()
+
+	go func() {
+		work := time.NewTicker(2 * time.Second) // 2초마다 특정한 작업 수행
+
+		for {
+			// ready 상태에 따라 req 채널 초기화
+			if isReady {
+				req = nodeReq
+			} else {
+				req = nil
+			}
+
+			select {
+			case <-work.C:
+				log.Println("working!")
+
+			case req <- "send Ready": // case <-work.C 를 수행할 수 없을 때 수행, req가 nil이면 실행되지 않음
+				log.Println("send string to out chan!")
+				isReady = false
+			}
+		}
+	}()
+
+	getReqChan := func() chan string {
+		return nodeReq
+	}
+	for {
+		select {
+		case s := <-getReqChan(): // Ready 수신
+			log.Println("recv", s)
+		}
+	}
+}
+```
+
+```
+2021/03/27 21:43:31 App: Start Loop                    // 31초 시작. 아직 req가 준비되지 않아서 req case문이 trigger되지 않음
+2021/03/27 21:43:33 Node: working!                     // work.C 채널 수신
+2021/03/27 21:43:35 Node: working!
+2021/03/27 21:43:35 Node: send Ready to nodeReq chan!  // req가 준비된 후 nodeReq 채널로 "send Ready" 문자열 송신
+2021/03/27 21:43:35 App: recv send Ready
+2021/03/27 21:43:37 Node: working!
+2021/03/27 21:43:37 Node: send Ready to nodeReq chan!
+2021/03/27 21:43:37 App: recv send Ready
+```
+
+#### chan chan
+status 채널의 타입을 보면 `chan chan Status` 타입이다. 이 채널은 `chan Status`을 송수신하는 채널이다. 즉 채널에 채널을 송수신하는 것이다. 2단게 채널을 이용하면 두개의 고루틴의 작동을 동기화 시킬 수있다.
+
+```go
+func main() {
+	reqChan := make(chan chan string)
+
+	go func() {
+		// Node Loop
+		for {
+			select {
+			case req := <-reqChan:
+				log.Println("Node: recv request. start process")
+				time.Sleep(2 * time.Second) // 2초 동안 작업 수행
+				req <- "process done"       // 작업이 끝났다고 알림
+			}
+		}
+	}()
+
+	// App Loop
+	for { // 무한 루프로 요청 전송
+		log.Println("App: send request")
+		done := make(chan string)
+		reqChan <- done // chan chan 으로 요청을 보냄
+		log.Println("App: recv response ", <-done) // 요청이 모두 처리될 때까지 기다림
+	}
+}
+```
+
+```
+2021/03/27 22:03:36 App: send request
+2021/03/27 22:03:36 Node: recv request. start process
+2021/03/27 22:03:38 App: recv response  process done // App Loop가 실제로 Node Loop와 동기화됨
+2021/03/27 22:03:38 App: send request
+2021/03/27 22:03:38 Node: recv request. start process
+2021/03/27 22:03:40 App: recv response  process done
+```
 
 <br>
 
 ## 마치면서
+사실 상용화된 프로젝트의 코드를 읽고 분석해본 적이 처음이었습니다. 옛날에는 '와 저런 프로그램의 코드는 내가 이해할 수 없을 정도로 수준이 높은 어썸한 코드겠지?' 라고 생각했었는데, 이번 ETCD의 Raft 라이브러리 코드를 분석하면서 많이 놀랐습니다. 정말 핫하고 좋은 오픈소스 프로젝트일 수록 가독성이 좋은 코드와 친절한 주석, 명확한 실행 로직을 갖고 있다는 것을 알게되었습니다. 역시 좋은 코드를 작성하는 개발자가 되는 것을 힘든 길인가 봅니다.
+
+### 분석글에 더 추가해야 할 내용
+코드를 분석하기로 결정하기 이전에, Raft를 직접 구현하면서 제일 힘들었던 부분이 동시성 처리, Snapshot 생성, 멤버쉽 변경 부분이었습니다. 논문에도 '어떤 어떤 식으로 수행하면 될거에요~'라고 말만 해주고 정확한 명세는 서술되어있지 않아서 구글링을 해보다가 결국 포기했습니다. 그런데 놀랍게도, 분석하는 글을 1300줄이나 쓰는 와중에 Snapshot, 멤버쉽 변경에 대한 핵심 로직은 설명되어있지 않습니다. Snapshot은 어느정도 분석은 끝났지만 글로 풀어내기에는 아직 이해를 다 하지 못했고, 멤버쉽 변경은 아직 코드도 다 읽지 못했기 때문입니다. 이후에 이부분을 추가할 예정입니다.
+
+코드를 분석하면서 영어로 되어있는 고봉밥같은 주석들을 한국어로 번역했었는데 이것도 따로 정리를 해놓아야 합니다. [여기](./annotation)에 계속 추가해 나가려 합니다.
+
+### 코드에서 의문이 드는 점
+생각보다 오류를 처리하는 로직에 panic이 많이 사용되고 있었습니다. Golang에서 라이브러리를 작성할 때 panic은 최대한 피하는 것이 정석이라 들은 것 같습니다. 주석을 보면 누군가가 이슈에 올려서 panic을 제거하는 작업을 하고있는 것 같지만 `Kubernetes`의 저장소를 담당하고 있는 코드에 panic이 이렇게 많다는 사실이 놀라웠습니다. (사실 절대 일어나지 않는 상황에다가 안전을 위해 필터링하는 코드들이 대부분입니다. 그래도 나중에 함수를 수정할 때 위험에 노출될 가능성은 있어보입니다.) 
+
+다음은 Raft 프로토콜에 전반적으로 드는 의문입니다. 바로바로 Snapshot의 크기가 커질때 발생하는 오버헤드입니다. 아무리 Copy-on-Write, Repeatable-Read 이런 기술을 사용한다고 해도, 클러스터를 대규모로 유지하면 Snapshot의 크기도 커지고 전송하는 빈도도 많아질 것 같은데 다른 로직에 영향을 안주고 제대로 실행될 수 있을 지 의문입니다. (raft.Node는 Snapshot 생성, 적용이 외부 Application에서 수행되긴 함.) 실제로 [쿠버네티스 스케일링 문서](https://cloud.google.com/kubernetes-engine/docs/best-practices/scalability?hl=ko)에도 노드가 5000개 이상인 클러스터에서 생성된 객체의 수는 ETCD의 제한사항에 따라 한도가 적용되어있다고 하는 것을 볼 수 있습니다. 이것이 Raft 알고리즘 자체의 한계인지 궁금합니다. 이 의문에 대한 답을 알고계신 분은 레포지토리의 이슈나 댓글로 달아주시면 정말 감사하겠습니다. 
+
+번외로 알리바바가 ETCD 코드를 수정해서 대규모 데이터 스토어로 사용한다는 아티클을 읽은 적이 있었는데 이것에 대해서도 좀 더 알아봐야 할 것 같습니다.
+
+### 찐 마지막
+이 코드 범벅이인 길고 지루한 글을 읽어주셔서 정말 감사합니다.
