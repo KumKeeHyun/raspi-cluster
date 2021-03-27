@@ -548,7 +548,7 @@ func (prs *ProgressTracker) Visit(task func (id uint64, p *Progress)) {
 <br>
 
 ## Leader 선출 처리 과정
-지금까지 ETCD의 raft 라이브러리가 스토리지, 네트워크 게층과 소통하는 방법, raft 프로토콜 구현에 필요한 로직을 raftpb.Message로 추상화하고 메시지가 처리되기까지의 과정을 살펴보았다. 이제 메시지들에 의해 raft 프로토콜이 작동하는 방법만 알아보면 된다. 모든 메시지를 살펴보기엔 무리가 있기 때문에 리더 선출(MsgHup, MsgVote, MsgVoteResp)과 로그 복제(MsgProp, MsgApp, MsgAppResp, MsgHeartbeat, MsgHeartbeatResp)만 흐름에 따라 살펴볼 것이다.
+지금까지 ETCD의 raft 라이브러리가 스토리지, 네트워크 게층과 소통하는 방법, raft 프로토콜 구현에 필요한 로직을 raftpb.Message로 추상화하고, 메시지가 라이브러리 내부로 전달되어 처리 되기까지의 과정을 살펴보았다. 이제 이 메시지들에 의해 raft 프로토콜이 작동하는 흐름만 알아보면 된다. 모든 메시지를 살펴보기엔 무리가 있기 때문에 리더 선출(MsgHup, MsgVote, MsgVoteResp)과 로그 복제(MsgProp, MsgApp, MsgAppResp, MsgHeartbeat, MsgHeartbeatResp)만 흐름에 따라 살펴볼 것이다.
 
 
 ### 1. ElectionTimeout 발생
@@ -571,7 +571,7 @@ func (r *raft) tickElection() {
 ### 2. Step 함수에서 hup 함수 호출
 raft.Step 함수는 메시지가 생성되었던 시점의 Term과 그 메시지를 처리하는 노드의 Term을 비교해서 상황에 따라 몇가지 작업을 한뒤에 step 함수들(stepLeader, stepCandidate, stepFollower)을 통해 특정한 작업을 수행한다. 이때 step 함수로 처리하지 않는 예외적인 메시지가 있는데 MsgHup(campaign 시작하는 메시지), MsgVote(투표를 요청하는 메시지)이다. 
 
-raft.hup 함수는 현재 자신의 노드가 Candidate가 될 수 있는 상태인지 확인하는 과정을 거치고 최종적으로 campaign 함수를 호출한다. 만약 자신의 로그에서 커밋되었지만 state-machine에 적용되지 않은 entries중에 snapshot, configChange 가 있다면 선거를 시작할 수 없다.
+raft.hup 함수는 현재 자신의 노드가 Candidate가 될 수 있는 상태인지 확인하는 과정을 거치고 최종적으로 campaign 함수를 호출한다. 만약 자신의 로그에서 커밋되었지만 아직 state-machine에 적용되지 않은 entries중에 configChange 가 있다거나 snapshot을 적용중이라면 선거를 시작할 수 없다.
 
 ```go
 // https://github.com/etcd-io/etcd/blob/master/raft/raft.go#L917
@@ -620,8 +620,6 @@ func (r *raft) hup(t CampaignType) {
 campaign 함수의 동작은 어렵지 않다. 노드의 상태를 Candidate로 전환하고 자신에게 먼저 투표한 다음, 투표할 수 있는 노드들에게 투표를 요청하는 메시지를 전송한다. 
 
 > ETCD Raft 라이브러리는 preVote, vote 두가지 기능을 모두 지원하지만 preVote는 안보고 넘어가려합니다.
-
-이 라이브러리는 앞서 설명했던 것처럼 네트워크 계층과 분리되어있기 때문에 모든 네트워크 작업은 비동기적으로 작동한다. 노드는 이후에 MsgVote 메시지들이 Node.Ready()를 통해 Application으로 전달되고, 네트워크 계층을 통해 다른 노드로 전달되고, MsgVoteResp 메시지를 네트워크 계층을 통해 전달받을 때까지 기다리지 않는다. 그냥 다른 메시지를 처리하고 있다가 나중에 MsgVoteResp 메시지가 도착하면 그떄 메시지를 알맞게 처리할 뿐이다. 이러한 작업이 오히려 로직의 복잡성을 줄이고 동시성 처리를 쉽게 해주는 것 같다.
 
 ```go
 // https://github.com/etcd-io/etcd/blob/master/raft/raft.go#L779
@@ -673,6 +671,9 @@ func (r *raft) campaign(t CampaignType) {
 	}
 }
 ```
+
+이 라이브러리는 앞서 설명했던 것처럼 네트워크 계층과 분리되어있기 때문에 모든 네트워크 작업은 비동기적으로 작동한다. 노드는 이후에 MsgVote 메시지들이 Node.Ready()를 통해 Application으로 전달되고, 네트워크 계층을 통해 다른 노드로 전달되고, MsgVoteResp 메시지를 네트워크 계층을 통해 전달받을 때까지 기다리지 않는다. 그냥 이어서 다른 메시지를 처리하고 있다가 나중에 MsgVoteResp 메시지가 도착하면 그떄 메시지를 알맞게 처리할 뿐이다. 이러한 작업이 오히려 로직의 복잡성을 줄이고 동시성 처리를 쉽게 해주는 것 같다.
+
 
 ### 4. MsgVote를 받은 다른 노드들의 동작
 raft 라이브러리를 사용하는 Application은 네트워크 계층을 통해 받은 메시지를 라이브러리 내부 로직에게 전달할 의무가 있다. 앞서서 이 메시지는 raft.Node 내부에서 raft.Step 에 의해 처리되는 것을 확인했기 때문에 raft.Step에서 해당 메시지를 처리하는 것만 보면 된다. 
@@ -726,7 +727,7 @@ func (r *raft) Step(m pb.Message) error {
 ### 5. MsgVoteResp를 받은 Candidate 노드의 동작
 이전에 campaign 함수를 통해 보냈던 MsgVote에 대한 응답 메시지가 도착했다면 선거 투표 현황을 업데이트하고, 선거 결과에 따라 Leader 상태로 올라간다. 
 
-만약 이 선거에서 이기지 못한 경우, 노드는 Candidate 상태에서 주기적으로 tick이 발생하고 른 노드또한 다들로 부터 온 메시지를 처리한다.  tickElection에 의해 다시 선거를 시작하거나, 선거에서 이긴 다른 노드에게 MsgApp 메시지를 받아 Follower 상태로 내려가게 된다.
+만약 이 선거에서 이기지 못한 경우, 노드는 Candidate 상태에서 주기적으로 발생되는 tick에 의해 다시 선거를 시작하거나, 선거에서 이긴 다른 노드에게 MsgApp 메시지를 받아 Follower 상태로 내려가게 된다.
 
 ```go
 // https://github.com/etcd-io/etcd/blob/master/raft/raft.go#L1393
@@ -763,8 +764,306 @@ func stepCandidate(r *raft, m pb.Message) error {
 <br>
 
 ## 로그 복제 처리 과정
+마지막으로 살펴볼 것은 로그를 복제하는 과정이다. 이 과정은 리더 선출처럼 하나의 줄기로만 처리되지 않고 여러개의 작은 흐름에 의해 처리되기 때문에 좀 복잡하다. 원활한 이해를 위해 여러 흐름중에서도 가장 핵심적인 흐름 하나만 골라서 콜스택을 따라갈 것이다. 로그에 새로운 entry를 추가하고, 복제를 위해 entries를 다른 노드에게 전송하고, 과반수로 복제가 이루어진 entires들이 commit되는 흐름을 살펴보자. 
+
+### 1. state-machine에 쓰기 작업을 하기 위해 새로운 변동 사항을 Raft 클러스터에 제안
+새로운 변동 사항을 클러스터에 제안한다는 식으로 말은 어렵지만 결국 Raft가 관리하는 로그에 새로운 Entry를 추가한다는 말이다. 
+
+Application이 client 요청에 따라 새로운 entry를 추가하고 싶다면, raft.Node.Propose 함수를 통해 MsgProp 메시지를 생성하고 raft.Step 함수에서 처리될 수 있도록 해야한다. 기본적으로 Raft 알고리즘에서 모든 데이터 흐름은 Leader -> Follower 로 흐르기 때문에 모든 Proposal은 리더에서 수행되어야 한다. 
+
+Entry의 종류는 EntryNormal(쓰기 작업), EntryConfChange(클러스터 구성 변경 작업)이 있다. ETCD Raft 라이브러리의 EntryConfChange 구현은 논문에 서술된 Raft 멤버쉽 변경 과 차이가 있다. ETCD 구현에서 confChange는 로그에 추가될 때 적용되지 않고, 해당 entry가 applied 되었을 때 적용된다. (entry가 커밋되고 Application로 전달되면 App이 멤버쉽 변경 작업 함수를 호출한다.) 또한 한번에 하나의 confChange만 커밋시키기 위해서 적용되지 않은 confChange가 로그에 존재하는 경우에는 새로운 confChange entry를 드랍시킨다.
+
+> README Note: 이 접근 방식은 멤버가 2개인 클러스터에서 한 노드를 제거할 때 문제가 발생할 수 있습니다. ConfChange entry의 커밋을 받지 못한 상태로 노드중 하나가 죽으면 클러스터가 더이상 진행할 수 없게 됩니다. 따라서 클러스터의 멤버쉽을 항상 3개 이상으로 사용하는 것이 좋습니다.
+
+> 이전 버전에서는 멤버쉽 변경에서 한번에 한 노드만 추가, 삭제가 가능했지만, `ConfChangeV2`를 통해 한번에 다수의 노드를 추가, 삭제하는 것이 가능해졌습니다.
+
+```go
+// https://github.com/etcd-io/etcd/blob/master/raft/raft.go#L1013
+func stepLeader(r *raft, m pb.Message) error {
+	switch m.Type {
+	// ...
+	case pb.MsgProp:
+		// ...
+
+		for i := range m.Entries {
+			e := &m.Entries[i]
+
+			var cc pb.ConfChangeI
+			if e.Type == pb.EntryConfChange {
+				// ... 
+				// 만약 Entry가 클러스터 구성 변경이라면 cc에 역직렬화
+			}
+			// 만약 Entry 가 클러스터 구성 변경 Entry 라면 이미 진행중인 confChange가 있는지 확인함. 
+			// 적용할 수 있다면 pendingConfIndex에 기록. 적용할 수 없다면 해당 Entry를 EntryNormal 으로 바꾸어서 드랍시킴.
+			if cc != nil { 
+				// ...
+
+				if refused != "" {
+					m.Entries[i] = pb.Entry{Type: pb.EntryNormal} // confChange Entry 드랍시킴
+				} else {
+					// Entry가 commit 되고 실제로 적용될 때까지 시간이 걸리기 때문에
+					// 현재 confChange가 진행중이라는 것을 알려야 함. 이 정보를 pendingConfIndex에 기록
+					r.pendingConfIndex = r.raftLog.lastIndex() + uint64(i) + 1 
+				}
+			}
+		}
+
+		// unstable 로그에 entries를 추가함
+		// 만약 unstable 로그의 용량이 꽉 찼다면 드랍시키고 false 리턴
+		// Follower 들의 로그 복제 진행 상황을 확인한 뒤에 commitedIndex 업데이트 
+		if !r.appendEntry(m.Entries...) { 
+			return ErrProposalDropped
+		}
+
+		// 추가한 entries를 복제하기 위해 Follower 들에게 MsgApp 메시지 전송. 
+		// 메시지에는 새로운 CommitedIndex, Entries 등이 포함됨.
+		r.bcastAppend() 
+		return nil
+	}
+
+	// ...
+}
+```
+
+ETCD Raft 라이브러리는 내부적으로 Follower가 생성한 MsgProp 메시지를 Leader로 Redirection 해준다. 따라서 client의 쓰기 요청을 받은 Application가 자신의 raft 모듈의 상태가 Follower인지, Leader 인지 확인할 필요 없이 raft.Node.Propose 함수를 호출하면 된다.
+
+> 단 Candidate 상태에서는 해당 제안이 드랍된다.
+
+```go
+// https://github.com/etcd-io/etcd/blob/master/raft/raft.go#L1417
+func stepFollower(r *raft, m pb.Message) error {
+	switch m.Type {
+	case pb.MsgProp:
+		// 알고있는 Leader가 없거나 Forwarding을 허락하지 않는 경우엔 드랍시킴.
+		if r.lead == None { 
+			return ErrProposalDropped
+		} else if r.disableProposalForwarding {
+			return ErrProposalDropped
+		}
+
+		// MsgProp 메시지를 그대로 Leader에게 전송
+		m.To = r.lead
+		r.send(m)
+	// ...
+	}
+	return nil
+}
+```
+
+### 2. MsgApp을 받은 Follower 노드의 동작
+이 동작은 아주 간단하다. 우선 tick에 의해 electionTimeout이 발생하지 않도록 electionElapsed를 초기화한다. 그리고 전달된 Entries가 자신의 로그에 추가할 수 있는지 검사하고, 결과에 따라 로그를 업데이트한다. 만약 Entries가 거부된 경우에는 Leader가 자신의 로그 상태를 잘못 추적하고 있다는 뜻이기 때문에 바로잡을 수 있는 정보를 MsgAppResp에 담아서 전송한다.
+
+또한 Leader의 CommittedIndex를 자신의 로그에 적용한다.
+
+```go
+// https://github.com/etcd-io/etcd/blob/master/raft/raft.go#L1427
+func stepFollower(r *raft, m pb.Message) error {
+	switch m.Type {
+	// ...
+	case pb.MsgApp:
+		r.electionElapsed = 0 // electionTimeout 초기화
+		r.lead = m.From
+		r.handleAppendEntries(m)
+	// ...
+	}
+	return nil
+}
+
+// https://github.com/etcd-io/etcd/blob/master/raft/raft.go#L1469
+func (r *raft) handleAppendEntries(m pb.Message) {
+	if m.Index < r.raftLog.committed {
+		r.send(pb.Message{To: m.From, Type: pb.MsgAppResp, Index: r.raftLog.committed})
+		return
+	}
+
+	// m.Index, m.LogTerm은 m.Entries(추가할 entries)의 바로 전 entry의 index, term 정보이다.
+	// 로그 복제에 있어서 같은 index 위치의 entry 두쌍의 term이 같으면 일치하는 것으로 판단한다.
+	// 즉 Follower의 로그에서 m.Index 위치의 entry의 Term이 m.LogTerm과 같다면 m.Entries를 추가할 수 있지만,
+	// 같지 않다면 m.Entries를 추가할 수 없다.
+	// 추가적으로 Follower의 로그가 m.Index 보다 뒤쳐저 있는 경우에도 m.Entries를 추가할 수 없다.
+	if mlastIndex, ok := r.raftLog.maybeAppend(m.Index, m.LogTerm, m.Commit, m.Entries...); ok {
+		r.send(pb.Message{To: m.From, Type: pb.MsgAppResp, Index: mlastIndex})
+	} else {
+
+		// Follower의 로그 상황이 Leader가 추적하고 있는 정보(NextIndex or MatchIndex)와 달라서 MsgApp 요청을 거부해야 할 때,
+		// Leader가 자신의 로그 상태를 빠르게 바로잡게 하기 위해 자신이 원하는 Index 정보를 힌트로 전달한다.
+		// 이러한 hintIndex가 어떤 상황에서 어떤 방식으로 구해지는지는 뒤에서 설명한다.
+		hintIndex := min(m.Index, r.raftLog.lastIndex())
+		hintIndex = r.raftLog.findConflictByTerm(hintIndex, m.LogTerm)
+		hintTerm, err := r.raftLog.term(hintIndex)
+		if err != nil {
+			panic(fmt.Sprintf("term(%d) must be valid, but got %v", hintIndex, err))
+		}
+
+		// Reject와 함께 RejectHint를 전달한다.
+		r.send(pb.Message{
+			To:         m.From,
+			Type:       pb.MsgAppResp,
+			Index:      m.Index,
+			Reject:     true,
+			RejectHint: hintIndex,
+			LogTerm:    hintTerm,
+		})
+	}
+}
+```
+
+
+### 3. MsgAppResp을 받은 Leader 노드의 동작
+Leader는 로그를 복제하기 위해 전송했던 메시지에 대한 응답 메시지를 받는다. Follower의 로그 상태에 따라 복제가 정상적으로 이루어질 수도 있고 복제 거부 메시지를 받을 수도 있다. Follower 측에서 복제를 거부했다는 뜻은 Leader가 Follower의 로그 복제 상태를 잘못 파악하고 있다는 뜻이기 때문에 이를 바로잡는 작업이 필요하다. 이 작업이 길어질 수록 네트워크 비용이 낭비되기 때문에 최대한 빨리 수정되어야 한다. 이 작업을 최적화하기 위해 Follower와 Leader가 모두 참여한다. 그 방법은 뒤에서 설명한다.
+
+Follower로부터 로그를 정상적으로 복제했다는 응답을 받으면 해당 Follower의 MatchIndex를 증가시키고 CommittedIndex를 증가시킬 수 있는지 검사한다. 만약 CommittedIndex가 업데이트되면 이를 알리기 위해 bcastAppend 함수를 호출한다.
+
+```go
+// https://github.com/etcd-io/etcd/blob/master/raft/raft.go#L1100
+func stepLeader(r *raft, m pb.Message) error {
+	// ...
+
+	pr := r.prs.Progress[m.From] // Follower 로그 복제 상태를 추적하는 object
+	if pr == nil {
+		r.logger.Debugf("%x no progress available for %x", r.id, m.From)
+		return nil
+	}
+
+	switch m.Type {
+	case pb.MsgAppResp:
+		pr.RecentActive = true
+
+		if m.Reject {
+			nextProbeIdx := m.RejectHint
+			if m.LogTerm > 0 {
+				// 복제를 위해 전달한 Entries가 거부되었다는 것은 Follower의 상태를 잘못 알고있다는 것이다.
+				// (이 상황은 선거에서 이긴 Leader가 NextIndex 정보를 자신의 로그를 기준을 초기화하는 상황에서 
+				// 발생됨. 또한 오랬동안 네트워크에 문제가 있던 Follower에게도 발생될 수 있음.
+				// NextIndex를 옳바른 값으로 수정하기위해 여러번 MsgApp을 전송하면 네트워크 비용이 낭비되기 때문에
+				// Leader는 이를 최대한 빠르게 수정해야 할 책임이 있음.)
+				// 
+				// Follower에서 이를 위해 전달한 RejectHintIndex, RejectHintTerm와 자신의 로그 정보를 바탕으로
+				// 옳바른 NextIndex를 빠르게 구해낼 수 있다. 이러한 작업을 수행하는 방법은 뒤에서 예제와 함께 설명한다.
+				nextProbeIdx = r.raftLog.findConflictByTerm(m.RejectHint, m.LogTerm)
+			}
+
+			// 만약 Follower에게 복제해야할 Entry가 이미 Snapshot에 포함되어 전달할 수 없을 때,
+			// Follower의 추적 상태를 Probe로 내리고 Snapshot을 전송하기 위해 sendAppend 함수를 호출한다.
+			if pr.MaybeDecrTo(m.Index, nextProbeIdx) {
+				if pr.State == tracker.StateReplicate {
+					pr.BecomeProbe()
+				}
+				r.sendAppend(m.From)
+			}
+		} else {
+			// 해당 Follower에게 Snapshot을 전달하고 있었거나, 너무 많은 
+			// Entries를 전송한 상태라서 로그 복제를 멈추고 있었는지 확인
+			oldPaused := pr.IsPaused()
+
+			// Follower의 로그 복제 상태(MatchIndex)를 업데이트
+			if pr.MaybeUpdate(m.Index) {
+				switch {
+				case pr.State == tracker.StateProbe:
+					pr.BecomeReplicate()
+
+				case pr.State == tracker.StateSnapshot && pr.Match >= pr.PendingSnapshot:
+					// Snapshot을 전달했던 Follower에게 MsgAppResp를 받으면 Snapshot 적용이 끝났다고 판단함.
+					// 로그 복제를 이어서 하기 위해 Replicate 상태로 올림.
+					pr.BecomeProbe()
+					pr.BecomeReplicate()
+
+				case pr.State == tracker.StateReplicate:
+					// flow control을 위한 작업 수행
+					pr.Inflights.FreeLE(m.Index)
+				}
+
+				// 로그 복제가 이루어졌기 때문에 CommittedIndex를 증가시키기 위해 maybeCommit 함수 호출
+				// 만약 CommittedIndex가 없데이트되었다면 그 정보를 모든 Follower에게 전달함.
+				if r.maybeCommit() {
+					releasePendingReadIndexMessages(r)
+					r.bcastAppend()
+				} else if oldPaused {
+					// 로그 복제를 하고있지 않았던 Follower의 경우 이전의 CommittedIndex 업데이트를
+					// 전달받지 않았을 수 있기 때문에 CommittedIndex를 전달함.
+					r.sendAppend(m.From)
+				}
+
+				for r.maybeSendAppend(m.From, false) {
+				}
+
+				// ...
+			}
+		}
+	// ...
+	}
+	return nil
+}
+```
+
+위 코드의 `pr.BecomeReplicate, pr.BecomeProbe`을 보면 pr(Progress: Follower의 로그 복제 상황을 추적하는 object)가 몇가지 상태를 갖고있는 것을 알 수 있다. 이것은 특정 Follower에게 전송하는 로그 복제의 속도(Snapshot을 적용중이거나 Flow Control을 조절하기 위한 경우 등)를 제어하기 위해 추가한 ETCD의 추가적인 구현이다. Progress 상태는 `Replicate`, `Probe`, `Snapshot` 상태를 갖고 이에 대한 StateMachine은 다음과 같다.
+
+<img src="https://user-images.githubusercontent.com/44857109/112720119-dc7fb280-8f3f-11eb-9492-f1b2038d14b9.png" width="70%" height="70%">
+
+- Probe: HeartbeatTimeout 간격동안 최대 하나의 복제 메시지를 전송합니다. Leader는 해당 노드의 실제 진행 상황을 정확하게 알지 못하기 때문에 실제 진행 상황을 조사할 때까지 최대한 느리게 복제 메시지를 전송합니다.
+- Replicate: 복제 메시지를 보낼 때마다 낙관적으로 다음에 보낼 로그의 크기를 증가시킵니다. Follower에게 로그 항목을 빠르게 복제하기 위한 상태입니다.
+- Snapshot: 이 상태일 때 Leader는 Follower에게 복제 메시지를 전송하지 않습니다.
+
+
+### 4. Leader가 Follower의 로그 복제 상황을 빠르게 수정하는 방법
+
+새로 선출된 Leader는 Follower들의 진행 상태를 `MatchIndex = 0`, `NextIndex = lastLogIndex`로 설정한다. Follower의 상태를 알지 못하기 때문에 Progress를 StateProbe 상태로 설정해두고 MsgHeartbeat 메시지를 보내면서 진행 상황을 조사합니다. 이때 단순하게 NextIndex를 일정 수준씩 감소시키면서 찾게 되면 로그 상태에 따라 너무 많은 시간이 걸릴 수 있습니다. ETCD 구현은 Follower의 `RejectHint`와 Leader의 `findConflictByTerm`을 통해 최대 2번의 메시지 교환을 통해 진행 상황을 조사할 수 있습니다.
+
+#### case 1
+
+<img src="https://user-images.githubusercontent.com/44857109/112720943-b3155580-8f44-11eb-8563-c6d332a26377.png" width="60%" height="60%">
+
+위 그림과 같은 상황을 가정해보자.
+
+1. Leader는 `Index=9, Term=5` 으로 로그 복제 메시지를 전송한다. 
+2. Follower의 로그는 `Index=6, Term=2`가 최대이기 때문에 이 정보를 RejectHint로 Leader에게 전달한다.
+3. Leader는 `NextIndex = 6` 으로 수정하고 `Index=6, Term=5` 으로 로그 복제 메시지를 전송한다. 
+4. Follower는 자신의 `Index=6` Entry의 Term과 일치하지 않기 때문에 이 Entry를 드랍하기위해 `Index=5, Term=2`을 RejectHint로 Leader에게 전달한다.
+5. 3, 4 반복...
+
+이 경우에서 Leader는 불필요한 로그 복제 메시지를 반복하면서 NextIndex를 6, 5, 4, ..., 1 까지 감소시킬 것이 자명하다. 여기서 한가지 로그의 특성을 이용한다.
+
+- 로그 복제가 Reject되는 상황에서는 항상 Leader의 Term은 Follower의 Term보다 크다.
+
+즉 처음에 받았던 RejectHint인 `Index=6, Term=2`에 있는 정보인 `Term=2`를 이용해서, Leader의 로그 중에서 Term이 2 보다 작거나 같은 Index를 선택하면(`Index=1, Term=1`) 빠르게 Probe를 성공시킬 수 있다. 수정된 상황에서 로그 복제 진행은 다음과 같다.
+
+1. Leader는 `Index=9, Term=5` 으로 로그 복제 메시지를 전송한다. 
+2. Follower의 로그는 `Index=6, Term=2`가 최대이기 때문에 이 정보를 RejectHint로 Leader에게 전달한다.
+3. Leader는 `Term=2` 보다 작거나 같은 Entry인 `Index=1, Term=1`을 찾고 이 정보로 로그 복제 메시지(`Index=[2,9]인 Entries`)를 전송한다.
+4. 즉-시 성공
+
+Leader의 `findConflictByTerm`는 이러한 로직으로 수행된다.
+
+### case 2
+`case 1`처럼 Leader만 노력을 해서는 완전하게 최적화할 수 없다. Follower도 노력을 해야한다.
+
+<img src="https://user-images.githubusercontent.com/44857109/112721577-ead1cc80-8f47-11eb-9d33-833fcadb11dd.png" width="60%" height="60%">
+
+위 그림과 같은 상황을 가정해보자.
+
+1. Leader는 `Index=9, Term=7` 으로 로그 복제 메시지를 전송한다. 
+2. Follower의 로그는 `Index=9` Entry의 Term이 6 이기 때문에 로그 복제가 일치하지 않다고 판단하고, `Index=9, Term=6`를 RejectHint로 Leader에게 전달한다.
+3. Leader는 `findConflictByTerm`을 이용해서 `Term=6` 보다 작거나 같은 Entry인 `Index=8, Term=3`을 찾고 이 정보로 로그 복제 메시지를 전송한다.
+4. Follower의 로그는 `Index=8` Entry의 Term이 5 이기 때문에 로그 복제가 일치하지 않다고 판단하고, `Index=8, Term=5`를 RejectHint로 Leader에게 전달한다.
+5. Leader는 `findConflictByTerm`을 이용해서 `Term=5` 보다 작거나 같은 Entry인 `Index=7, Term=3`을 찾고 이 정보로 로그 복제 메시지를 전송한다.
+6. 4, 5 반복...
+
+이처럼 Leader의 노력에도 불구하고 옳바른 NextIndex를 찾기위해 Reject 당할 로그 복제 메시지를 반복해서 전송하게 된다. `3`의 상황에서 Leader가 보낸 로그 복제 메시지를 통해 Follower는 'Leader의 로그에서 `Index=8` Entry의 Term이 3 이기 때문에 그 이전의 Entries 또한 Term이 3보다 같거나 작을 것' 이라는 정보를 얻을 수 있다. 따라서 Follower는 자신의 로그에서 Term이 3보다 작거나 같은 Entry(`Index=3, Term=3`)를 RejectHint로 사용하는 방식으로 최적화할 수 있다. 수정된 상황에서 로그 복제 진행은 다음과 같다.
+
+
+1. Leader는 `Index=9, Term=7` 으로 로그 복제 메시지를 전송한다. 
+2. Follower의 로그는 `Index=9` Entry의 Term이 6 이기 때문에 로그 복제가 일치하지 않다고 판단하고, `Index=9, Term=6`를 RejectHint로 Leader에게 전달한다.
+3. Leader는 `findConflictByTerm`을 이용해서 `Term=6` 보다 작거나 같은 Entry인 `Index=8, Term=3`을 찾고 이 정보로 로그 복제 메시지를 전송한다.
+4. Follower는 자신의 로그에서 `Term=3` 보다 작거나 같은 Entry인 `Index=3, Term=3`를 RejectHint로 Leader에게 전달한다.
+5. Leader는 `Index=3, Term=3`으로 로그 복제 메시지(`Index=[4,9]인 Entries`)를 전송한다.
+6. 즉-시 성공
 
 
 <br>
 
 ## raft.Node에서 채널 이벤트 기반으로 오케스트레이션 하기
+
+
+<br>
+
+## 마치면서
