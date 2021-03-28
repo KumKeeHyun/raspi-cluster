@@ -50,7 +50,7 @@
 저는 대학교 3학년을 수료한 상태이고 글을 써본적이 별로 없는 공대생입니다. 분산 시스템에 대한 강의를 수강한 것도 아니고 인터넷에서 여러 자료를 찾아가면서 공부했기 때문에 `Raft 합의 알고리즘`에 친숙하지 않으신 분들을 위해 개념부터 설명해드리기엔 저의 능력이 부족합니다. 이런 큰 코드를 분석해본 경험도 적기 때문에 읽으시면서 글이 매끄럽지 않더라도 양해 부탁드립니다.
 
 ### 간단하게 Raft란
-Raft는 여러 머신에서 복제된 상태를 유지할 수 있게 하는 합의 알고리즘입니다. Raft는 state-machine 자체를 복제하는 것이 아니라 state-machine에 적용할 변동사항을 로그형태로 관리하고 이 로그를 복제합니다. 모든 데이터의 흐름(복제)은 Leader에서 Follower로 흐릅니다. 한 논리적인 클러스터에서 Leader는 1개만 존재하고 이러한 Leader 선거를 통해 선출됩니다. 
+Raft는 여러 머신에서 복제된 상태를 유지할 수 있게 하는 합의 알고리즘입니다. Raft는 state-machine 자체를 복제하는 것이 아니라 state-machine에 적용할 변동사항을 로그형태로 관리하고 이 로그를 복제합니다. 모든 데이터의 흐름(복제)은 Leader에서 Follower로 흐릅니다. 한 논리적인 클러스터에서 Leader는 1개만 존재하고 이러한 Leader는 선거를 통해 선출됩니다. 
 
 - Raft 설명 자료
 	- [In Search of an Understandable Consensus Algorithm 논문 PDF](https://raft.github.io/raft.pdf)
@@ -551,7 +551,7 @@ func (rn *RawNode) acceptReady(rd Ready) {
 }
 ```
 
-raft.raft object에는 다른 peer 노드에게 전송할 메시지들을 임시로 저장해두는 `버퍼 필드(r.msgs []raftpb.Message)`가 있다. raft.Step을 통해 여러 메시지를 처리하는 도중에 특정한 작업을 수행하기 위해 메시지를 전송해야 하는 경우(ex: 선거에서 투표를 요청할 때) `send 함수`를 통해 버퍼에 메시지를 추가한다. 버퍼에 저장된 메시지들은 배치형식으로 `Ready 구조체`에 담겨 Application으로 전달되는데 이때 Ready.Messages 필드에 메시지들을 담아서 전달한다. 이후 Application Loop에서 Ready에 대한 모든 작업(안정적인 저장소에 메타데이터 저장, CommitedEntries 적용, Snapshot 적용, 다른 peer에게 메시지 전송 등)을 수행하고 다음 배치를 받기 위해 Node.Advance() 를 호출하면 `acceptReady()` 를 통해서 메시지 버퍼가 비워지는 방식이다.
+raft.raft object에는 다른 peer 노드에게 전송할 메시지들을 임시로 저장해두는 `버퍼(r.msgs []raftpb.Message)`가 있다. raft.Step을 통해 여러 메시지를 처리하는 도중에 특정한 작업을 수행하기 위해 메시지를 전송해야 하는 경우(ex: 선거에서 투표를 요청할 때) `send 함수`를 통해 버퍼에 메시지를 추가한다. 버퍼에 저장된 메시지들은 배치형식으로 `Ready 구조체`에 담겨 Application으로 전달되는데 이때 Ready.Messages 필드에 메시지들을 담아서 전달한다. 이후 Application Loop에서 Ready에 대한 모든 작업(안정적인 저장소에 메타데이터 저장, CommitedEntries 적용, Snapshot 적용, 다른 peer에게 메시지 전송 등)을 수행하고 다음 배치를 받기 위해 Node.Advance() 를 호출하면 `acceptReady()` 를 통해서 메시지 버퍼가 비워지는 방식이다.
 
 raft.Node가 배치형식으로 데이터를 Application에 전달하고 외부에서 들어오는 메시지를 처리하는 내부 로직은 차근차근 빌드업을 모두 마친뒤에 설명하려고 한다. 
 
