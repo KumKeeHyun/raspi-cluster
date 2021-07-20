@@ -184,7 +184,44 @@ producer가 broker의 응답을 받지 않고 얼마나 많은 메시지를 보�
 
 kafka version 0.11 부터 "exatly once"를 지원한다. 
 
-producer의 acks를 all으로, delivery.timeout을 적절히 크게 세팅해서 신뢰도를 최대로 설정했다고 가정해보자. 대부분 메시지가
+producer의 acks를 all으로, delivery.timeout을 적절히 크게 세팅해서 신뢰도를 최대로 설정했다고 가정해보자. 모든 메시지들은 kafka에 최소한 한번(at least once) 쓰일 것이다. 즉, 특정한 경우에는 메시지가 중복해서 쓰일 수 있다. 예를들어 broker가 producer의 메시지를 받고 ISR에 모두 복제한 상태에서, producer에게 성공 응답을 하기 전 leader broker가 죽었다면, producer에서 timeout 이후 재전송을 시도하기 때문에 메시지가 중복으로 쓰이게 된다.
 
+이러한 상황을 피하려 한다면(exactly once를 지원해야 한다면), enable.idempotence를 true로 설정해야 한다. 해당 설정을 활성화하면, producer는 각각의 메시지에 시퀀스 번호를 붙여서 broker에게 보내게 된다. broker는 5 크기의 message window를 유지하고 해당 window에서 중복된 시퀀스 번호를 받으면 DuplicateSequenceException을 producer에게 보내게 된다.
 
+> enable.idempotence를 활성화하려면, "inflight <= 5", "retries > 0", "acks = all" 설정이 요구된다. 앞선 설정값들이 선행되지 않으면 ConfigException을 던질 것이다.
+
+## Serializers
+
+## Partitions
+
+kafka message는 key-value 쌍이지만, ProducerRecord는 topic과 value값만으로 생성할 수 있다. 이때 key는 기본값인 null로 설정된다.
+
+key값 사용엔 2가지 목적이 있다.
+
+- 저장할 메시지에 추가적인 정보 전달
+- 메시지가 토픽의 어떤 파티션에 쓰일지 결정
+- (추가적으로 토픽을 콤팩트하게 유지하는 데에 중요한 역할을 함)
+
+### default partitioner
+
+- key가 null일 때
+    - round-robin 알고리즘에 의해 파티션에 분배된다.
+    - round-robin은 message 단위가 아닌 batch 단위로 파티션에 분배된다.
+        - 즉, 한번 broker로 요청을 보내는 배치는 모두 같은 파티션으로 전송한다. 다음 배치는 이전에 보냈던 배치와 다른 파티션으로 전송한다.
+        - 이러한 정책은 같은 수의 message들을 더 적은 요청으로 보낼 수 있게 해준다. broker는 지연율을 낮추고 CPU 사용량을 줄일 수 있다. 
+
+- key가 있을 때
+    - key를 해싱해서 파티션에 분배한다.
+        - 해시 알고리즘은 독자적인 알고리즘을 사용한다.
+        - Java의 버전에 따라 해싱결과가 바뀌지 않게 한다.
+    - 같은 key라면 항상 같은 파티션에 매핑되도록 하는 것이 중요하기 때문에, 특정 파티션의 가용성은 무시하고 항상 모든 파티션을 매핑에 사용한다.
+        - 특정 파티션이 leader 교체로 인해서 잠시동안 사용할 수 없는 경우, 해당 시간동안 데이터를 보내면 에러가 난다.
+
+defualt partitioner를 사용할 경우, 토픽의 파티션 수가 변하지 않는다면, key에 대한 매핑 결과는 일정하다. 하지만 새로운 파티션이 추가되는 순간, 더이상 이전과 같은 매핑 결과를 보장하지 않는다. key값이 동일하더라도, 새로 추가되는 메시지들은 이전 메시지들과 다른 파티션에 추가될 것이다. 만약 key에 대한 파티셔닝 결과가 중요하다면 처음부터 토픽을 생성할 때 파티션 개수를 넉넉하게 만들어두고 이후엔 추가하지 않는 것이 좋다.        
+
+### RoundRobinPartitioner & UniformStickyPartitioner
+
+### Implementing a custom partitioning strategy
+
+## Interceptors
 
