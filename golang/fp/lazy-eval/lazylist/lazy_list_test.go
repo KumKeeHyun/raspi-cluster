@@ -107,3 +107,16 @@ func TestFilterMap(t *testing.T) {
 
 	equalsThat(got, want, t)
 }
+
+func TestLazyEval(t *testing.T) {
+	list := RangeFromTo(1, 11)
+
+	got := list.Filter(func(a int) bool {
+		return a % 2 == 0
+	}).Map(func(a int) int {
+		return a * 10
+	}).Head()
+	want := 20
+
+	equalsThat(got, want, t)
+}
