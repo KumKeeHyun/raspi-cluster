@@ -5,7 +5,7 @@ import (
 )
 
 func TestNaturalNumber(t *testing.T) {
-	list := NaturalNumList()
+	list := NaturalList()
 	
 	got := list.TakeN(5)
 	want := []int{1, 2, 3, 4, 5}
@@ -14,7 +14,7 @@ func TestNaturalNumber(t *testing.T) {
 }
 
 func TestNaturalNumberFilter(t *testing.T) {
-	list := NaturalNumList()
+	list := NaturalList()
 	
 	got := list.Filter(func(a int) bool {
 		return a % 2 == 0
@@ -25,7 +25,7 @@ func TestNaturalNumberFilter(t *testing.T) {
 }
 
 func TestNaturalNumberMap(t *testing.T) {
-	list := NaturalNumList()
+	list := NaturalList()
 	
 	got := list.Map(func(a int) int {
 		return a + 10
@@ -36,7 +36,7 @@ func TestNaturalNumberMap(t *testing.T) {
 }
 
 func TestNaturalNumberFilterMapReduce(t *testing.T) {
-	list := NaturalNumList()
+	list := NaturalList()
 	
 	got := list.Filter(func(a int) bool {
 		return a % 2 == 0

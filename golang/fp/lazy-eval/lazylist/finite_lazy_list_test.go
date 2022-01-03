@@ -24,11 +24,7 @@ func equalsThat(got interface{}, want interface{}, t *testing.T) {
 func TestRange(t *testing.T) {
 	list := Range(4)
 
-	equalsThat(list.Head(), 0, t)
-	equalsThat(list.Tail().Head(), 1, t)
-	equalsThat(list.Tail().Tail().Head(), 2, t)
-	equalsThat(list.Tail().Tail().Tail().Head(), 3, t)
-	equalsThat(list.Tail().Tail().Tail().Tail().IsEmpty(), true, t)
+	equalsThat(list.TakeAll(), []int{0, 1, 2, 3}, t)
 
 	emptyList := Range(0)
 	equalsThat(emptyList.IsEmpty(), true, t)
@@ -40,16 +36,22 @@ func TestRange(t *testing.T) {
 func TestRangeFromTo(t *testing.T) {
 	list := RangeFromTo(1, 5)
 
-	equalsThat(list.Head(), 1, t)
-	equalsThat(list.Tail().Head(), 2, t)
-	equalsThat(list.Tail().Tail().Head(), 3, t)
-	equalsThat(list.Tail().Tail().Tail().Head(), 4, t)
-	equalsThat(list.Tail().Tail().Tail().Tail().IsEmpty(), true, t)
+	equalsThat(list.TakeAll(), []int{1, 2, 3, 4}, t)
 
 	emptyList := RangeFromTo(1, 1)
 	equalsThat(emptyList.IsEmpty(), true, t)
 
 	emptyList = RangeFromTo(5, 1)
+	equalsThat(emptyList.IsEmpty(), true, t)
+}
+
+func TestSliceToLazyList(t *testing.T) {
+	list := SliceToLazyList([]int{10, 2, 4, 3})
+
+	equalsThat(list.TakeAll(), []int{10, 2, 4, 3}, t)
+	equalsThat(list.TakeN(2), []int{10, 2}, t)
+
+	emptyList := SliceToLazyList([]int{})
 	equalsThat(emptyList.IsEmpty(), true, t)
 }
 

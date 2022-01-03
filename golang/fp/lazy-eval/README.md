@@ -14,6 +14,8 @@
 
 ## 게으른 리스트 만들기
 
+[구현한 코드](./lazylist)
+
 `Golang`은 엄격한 언어이지만, 클로저와 재귀적 표현을 이용하면 게으른 리스트를 구현할 수 있다. 클로저 블록의 실행은 뒤로 연기할 수 있기 때문이다.
 
 엄격한 자료구조를 클로저로 감싸면 게으른 자료구조가 만들어진다.
@@ -117,7 +119,7 @@ list.eval().eval().eval().item // 1
 
 ```go
 func (l *lazyList) head() int {
-	if l.IsEmpty() {
+	if l.isEmpty() {
 		panic("empty list!!")
 	}
     // 값을 평가한 후 요소 반환
@@ -125,7 +127,7 @@ func (l *lazyList) head() int {
 }
 
 func (l *lazyList) tail() *lazyList {
-	if l.IsEmpty() {
+	if l.isEmpty() {
 		return l
 	}
     return &lazyList{
@@ -151,7 +153,7 @@ list.tail().tail().head() // 1
 
 ```go
 func (l *lazyList) reduceAllItem(acc int, f func(a, b int) int) int {
-	if l.IsEmpty() {
+	if l.isEmpty() {
 		return acc
 	}
 	return l.tail().reduceAllItem(f(acc, l.Head()), f)
@@ -167,10 +169,10 @@ list.reduceAllItem(0, func(a, b int) int {
 
 ```go
 func (l *lazyList) reduceAllList(acc []int, f func(a []int, b int) []int) []int {
-	if l.IsEmpty() {
+	if l.isEmpty() {
 		return acc
 	}
-	return l.tail().reduceAllList(f(acc, l.Head()), f)
+	return l.tail().reduceAllList(f(acc, l.head()), f)
 }
 
 func (l *lazyList) takeAll() []int {
@@ -202,14 +204,16 @@ func mapFunc(src []int, f func(a int) int) []int {
 
 하지만 지금까지 구현한 리스트는 게으른 리스트다. 필수적이지 않은 연산은 최대한 뒤로 미루고 필요할 때 값을 평가한다. map연산은 리스트의 요소를 평가하기 전까지 최대한 뒤로 미룰 수 있다. 
 
+다음은 인자로 주어진 연산을 값을 평가하는 시점에 계산하도록 하는 `mapFunc` 구현이다. 
+
 ```go
 func (l *lazyList) mapFunc(f func(a int) int) *lazyList {
-	if l.IsEmpty() {
+	if l.isEmpty() {
 		return l
 	}
 	return newLazyList(func() *value {
 		return &value{
-			item: f(l.Head()),
+			item: f(l.head()),
 			nextEval: func() *value {
 				return l.tail().mapFunc(f).eval()
 			},
@@ -226,14 +230,14 @@ filter함수 구현도 map과 동일하다. 리스트의 값을 평가하지 않
 
 ```go
 func (l *lazyList) filterFunc(f func(a int) bool) *lazyList {
-	if l.IsEmpty() {
+	if l.isEmpty() {
 		return l
 	}
 
-	if f(l.Head()) {
+	if f(l.head()) {
 		return newLazyList(func() *value {
 			return &value{
-				item: l.Head(),
+				item: l.head(),
 				nextEval: func() *value {
 					return l.tail().filterFunc(f).eval()
 				},
@@ -305,19 +309,27 @@ rangeFromTo(1, 11).filterFunc(func(a int) bool {
 `lazy evaluation`의 장점이라 했던 무한수열 모델링을 해보자. 다음은 자연수 집합을 게으른 리스트로 표현한 코드이다.
 
 ```go
-func NaturalNumList() *lazyList {
-	return naturalNumList(1)
+func NaturalList() *lazyList {
+	return increasingList(1)
 }
 
-func naturalNumList(n int) *lazyList {
+func increasingList(n int) *lazyList {
 	return newLazyList(func() *value {
 		return &value{
 			item: n,
 			nextEval: func() *value {
-				return naturalNumList(n + 1).eval()
+				return increasingList(n + 1).eval()
 			},
 		}
 	})
 }
+
+NaturalList().takeN(5) // []int{1, 2, 3, 4, 5}
+NaturalList().takeN(10000) // []int{1, 2, 3, ..., 10000}
+
+// []int{2, 4, 6, 8, 10}
+NaturalList().filterFunc(func(a int) bool){
+	return a % 2 == 0
+}.takeN(5) 
 ```
 
