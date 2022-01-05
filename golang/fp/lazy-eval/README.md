@@ -10,11 +10,105 @@
 
 ## 시간이 많이 걸리는 연산 뒤로 미루기
 
-나중에 예시 추가할 예정
+우선 시간이 많이 걸리는 연산의 예시로 소수를 설정했다. 다음은 특정 정수가 소수인지 판단하는 코드이다.
+
+[구현한 소스코드](./prime)
+
+```go
+func NextPrimeFrom(num int) int {
+	num += 1
+	for !IsPrime(num) {
+		num += 1
+	}
+	return num
+}
+
+func IsPrime(num int) bool {
+	return sumOfFactors(num) == num+1
+}
+
+func sumOfFactors(num int) int {
+	sum := 0
+	for _, factor := range factorsOf(num) {
+		sum += factor
+	}
+	return sum
+}
+
+func factorsOf(num int) []int {
+	result := make([]int, 0)
+
+	sqrtNum := int(math.Sqrt(float64(num))) + 1
+	for i := 1; i < sqrtNum; i++ {
+		if isFactor(num, i) {
+			result = append(result, i, num/i)
+		}
+	}
+	return result
+}
+
+func isFactor(num, potential int) bool {
+	return num%potential == 0
+}
+```
+
+특정 양의 정수가 소수인지 판단하는 연산의 시간복잡도는 `O(n^1/2)`이다. Benchmark 테스트 결과 대략 3초동안 60000까지의 소수를 찾아낼 수 있다. <s>실행환경이 `raspi-4`여서 성능이 구리다.</s>
+
+```
+goos: linux
+goarch: arm64
+pkg: github.com/KumKeeHyun/raspi-cluster/golang/fp/lazy-eval/prime
+BenchmarkPrimeIter-4   	   59116	     49547 ns/op	    3106 B/op	      41 allocs/op
+PASS
+ok  	github.com/KumKeeHyun/raspi-cluster/golang/fp/lazy-eval/prime	3.146s
+```
+
+Golang는 게으른 컬렉션을 기본으로 제공하지 않지만 여러가지 방법으로 흉내낼 수 있다. 가장 친숙한 개념인 `iterator`를 이용해서 필요할 때만 다음 소수를 계산하도록 구현해보자.
+
+```go
+type Iterator interface {
+	HasNext() bool
+	Next() int
+}
+
+type primeIterator struct {
+	lastPrime int
+}
+
+func NewPrimeIterator() Iterator {
+	return &primeIterator{1}
+}
+
+func NewPrimeIteratorFrom(num int) Iterator {
+	return &primeIterator{num}
+}
+
+func (pi *primeIterator) HasNext() bool{
+	return true
+}
+
+func (pi *primeIterator) Next() int{
+	pi.lastPrime = NextPrimeFrom(pi.lastPrime)
+	return pi.lastPrime
+}
+```
+
+`1000000000`보다 큰 소수 N개를 구하려 했을 때, 가장 간단한 방법은 반복문을 돌면서 N개의 소수를 찾는 것이다. 하지만 N이 특정되지 않은 상태에서 `1000000000`보다 큰 첫번째, 두번째 소수를 구해야 하는 상황이라면? N값을 어림잡아 반복문을 돈다면, 실제론 안쓸 수도 있는 소수까지 계산하게 될 수 있다. 
+
+`iterator`로 구현한 소수 반복자는 최종적으로 얼마나 많은 소수를 구해야할지 고려하지 않고도 필요한 만큼 소수를 구할 수 있다. 다음 소수값이 지금 당장 필요없다면 해당 연산을 하지않고 뒤로 미룰 수 있게 된 것이다. 
+
+```go
+iter := NewPrimeIteratorFrom(1000000000)
+iter.Next() // 1000000007
+iter.Next() // 1000000009
+iter.Next() // 1000000021
+
+// 1000000021 다음의 소수는 필요없음 -> 계산 미룸
+```
 
 ## 게으른 리스트 만들기
 
-[구현한 코드](./lazylist)
+[구현한 소스코드](./lazylist)
 
 `Golang`은 엄격한 언어이지만, 클로저와 재귀적 표현을 이용하면 게으른 리스트를 구현할 수 있다. 클로저 블록의 실행은 뒤로 연기할 수 있기 때문이다.
 
@@ -22,10 +116,10 @@
 
 ```go
 lazy := func() int { 
-    return 1
+    return NextPrimeFrom(100000000000000000)
 }
 
-lazy() // return 1
+lazy() // lazy를 호출하기 전까지는 100000000000000000보다 큰 소수를 계산하지 않는다.
 ```
 
 계속해서 요소를 더하기 위해, 요소를 앞에 더하고 클로저로 감싸면 게으른 리스트를 만들 수 있다.
@@ -333,3 +427,24 @@ NaturalList().filterFunc(func(a int) bool){
 }.takeN(5) 
 ```
 
+같은 방식으로 피보나치 수열을 구현할 수 있다.
+
+```go 
+func FibonacciList() *lazyList {
+	return fibonacci(0, 1)
+}
+
+func fibonacci(a, b int) *lazyList {
+	return newLazyList(func() *evaluatedList {
+		return &evaluatedList{
+			item: b,
+			nextEval: func() *evaluatedList {
+				return fibonacci(b, a+b).eval()
+			},
+		}
+	})
+}
+
+// []int{1, 1, 2, 3, 5, 8, 13, 21, 34, 55}
+FibonacciList().TakeN(10)
+```
