@@ -7,13 +7,29 @@ type evaluatedList struct {
 
 type evalFunc func() *evaluatedList
 
+func memorize(f evalFunc) evalFunc {
+	var (
+		cache *evaluatedList = nil
+		isEmpty bool = false
+	)
+	return func() *evaluatedList {
+		if !isEmpty && cache == nil {
+			cache = f()
+			if cache == nil {
+				isEmpty = true
+			}
+		}
+		return cache
+	}
+}
+
 type lazyList struct {
 	eval evalFunc
 }
 
-func newLazyList(list evalFunc) *lazyList {
+func newLazyList(eval evalFunc) *lazyList {
 	return &lazyList{
-		eval: list,
+		eval: memorize(eval),
 	}
 }
 
@@ -60,14 +76,12 @@ func (l *lazyList) isEmpty() bool {
 }
 
 func (l *lazyList) cons(item int) *lazyList {
-	return &lazyList{
-		eval: func() *evaluatedList {
-			return &evaluatedList{
-				item:     item,
-				nextEval: l.eval,
-			}
-		},
-	}
+	return newLazyList(func() *evaluatedList {
+		return &evaluatedList{
+			item:     item,
+			nextEval: l.eval,
+		}
+	})
 }
 
 func (l *lazyList) head() int {
@@ -85,7 +99,7 @@ func (l *lazyList) tail() *lazyList {
 }
 
 func (l *lazyList) reduceNItem(n, acc int, f func(a, b int) int) int {
-	if l.isEmpty() || n == 0 {
+	if  n == 0 || l.isEmpty() {
 		return acc
 	}
 	return l.tail().reduceNItem(n-1, f(acc, l.head()), f)
@@ -99,7 +113,7 @@ func (l *lazyList) reduceAllItem(acc int, f func(a, b int) int) int {
 }
 
 func (l *lazyList) reduceNList(n int, acc []int, f func(a []int, b int) []int) []int {
-	if l.isEmpty() || n == 0 {
+	if n == 0 || l.isEmpty() {
 		return acc
 	}
 	return l.tail().reduceNList(n-1, f(acc, l.head()), f)
