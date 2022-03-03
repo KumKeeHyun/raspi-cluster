@@ -81,6 +81,35 @@ Fetch 요청에선 오프셋 순서가 보장된다. 레플리카가 메시지 1
 
 ## Request Processing
 
+카프카로의 요청과 응답은 TCP 위에서 특정한 형식의 바이너리 프로토콜을 사용한다. Apache Kafka 프로젝트에는 Java client만 포함하고 있지만, 바이너리 프로토콜을 구현한 다양한 언어(Go, Python, C/C++...) client들이 있다. 
+
+특정한 클라이언트로부터 온 요청들은 해당 브로커에서 순차적으로 처리된다. 이것은 카프카가 메시지큐 처럼 동작할 수 있게 하고, 저장하는 메시지에 대한 순서를 보장한다. 
+
+모든 요청에는 기본적인 헤더를 포함한다.
+
+- Request type, API key
+- Request version
+- Correlation ID: 해당 요청에 대한 고유한 식별 숫자. 요청에 대한 응답이나 트러블 슈팅을 위해서 에러 로그에 사용됨
+- Client ID
+
+브로커는 `acceptor thread`를 통해 포트로 오는 요청에 대한 커넥션을 생성하고, 요청을 처리하기 위해  `processor thread`에 전달한다. 실행할 processor thread 수는 설정할 수 있다. `netword thread(== processor thread)`들은 요청을 request queue에 넣고, response queue에서 응답을 선택해서 클라이언트에게 보내는 역할을 한다. 기본적으로 요청에 대한 응답에는 딜레이가 있다. 컨슈머는 데이터를 받을 수 있을 때만 응답을 받는다. 반변에 `DeleteTopic` 요청을 보낸 어드민은 토픽 삭제가 진행되고 나서 응답을 받는다. 지연된 응답들은 처리가 끝날 때까지 `piurgatory`에서 대기한다. 
+
+request queue에 들어온 요청은 `IO Thread(== handler thread)`들에 의해 처리된다. 가장 일반적인 요청 유형은 다음과 같다.
+
+- Produce request: 프로듀서가 보내는 요청 유형. 브로커에 쓸 메시지를 담고 있음.
+- Fetch reqeust: 컨슈머와 팔로워 레플리카가 브로커로부터 메시지를 읽을 때 보내는 요청 유형.
+- Admin request: 토픽 생성/삭제 같은 메타데이터 작업을 할 때 보내는 요청 유형
+
+
+<img src="img/request-processing.png">
+ 
+produce/fetch request는 모두 파티션의 리더 레플리카로 보내야 한다. 만약 팔로워 레플리카가 produce/fetch request를 받았다면, 해당 요청을 보낸 클라이언트는 `"Not a Leader for Partition"` 가 담긴 에러 응답을 받을 것이다. 따라서 produce/fetch request를 보내는 카프카의 클라이언트는 리더 레플리카가 있는 브로커에 요청을 보내야하는 책임이 있다.
+
+그렇다면 클라이언트는 리더 레플리카가 어디에 있는지 어떻게 알 수있을 까? 카프카 클라이언트는 또다른 요청 유형인 `metadata request`를 통해 알아야하는 토픽의 파티션, 각 파티션에 있는 레플리카, 어떤 레플리카가 리더인지 등에 대한 정보를 얻는다. 모든 브로커는 이러한 정보를 캐싱해두기 때문에, metadata request는 모든 브로커에 보낼 수 있다. 
+
+클라이언트는 metadata request를 통해 얻은 정보를 캐싱하고 produce/fetch request를 보낼때 직접적으로 사용한다. 브로커 클러스터 쪽에서 토픽에 대한 메타데이터가 바뀔 수 있기 때문에(ex: 새로운 브로커가 참가해서 레플리카가 새 브로커로 이동하는 경우), 클라이언트는 지속적으로 metadata request를 보내서 정보를 갱신해야 한다(`metadata.max.age.ms` 설정값을 통해 갱신 주기를 조절할 수 있음). 추가적으로 클라이언트가 `Not a Leader` 에러 응답을 받았다면, 현재 캐싱된 메타데이터 정보가 브로커와 일치하지 않다는 것을 의미하기 때문에, 다음 produce/fetch request를 보내기 전에 메타데이터를 갱신한다.
+
+<img src="img/client-routing.png">
 
 
 ## Physical Storage
