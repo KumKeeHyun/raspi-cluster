@@ -125,33 +125,30 @@ lazy() // lazy를 호출하기 전까지는 100000000000000000보다 큰 소수�
 계속해서 요소를 더하기 위해, 요소를 앞에 더하고 클로저로 감싸면 게으른 리스트를 만들 수 있다.
 
 ```go
-type value struct {
+type evaluatedList struct {
     item int
     nextEval evalFunc
 }
 
-type evalFunc func() *value
+type evalFunc func() *evaluatedList
 
-list := &value{
-    item: 1,
-    nextEval: func() *value {
-        return &value{
-            item: 2,
-            nextEval: func() *value {
-                return &value{
-                    item: 3,
-                    nextEval: func() *value {
-                        return nil
-                    },
-                }
-            },
-        }
-    },
-}
+list := func() *evaluatedList {
+	return &evaluatedList{
+		item: 1,
+		nextEval: func() *evaluatedList {
+			return &evaluatedList{
+				item: 2,
+				nextEval: func() *evaluatedList {
+					return nil
+				},
+			}
+		},
+	}
+} 
 
-list.item // 1
-list.nextEval().item // 2
-list.nextEval().nextEval().item // 3
+list().item // 1
+list().nextEval().item // 2
+list().nextEval().nextEval() // nil
 ```
 
 조금 복잡하지만 재귀적으로 요소를 추가하고 클로저로 감싸는 구조이다. 요소를 추가하기 쉽도록 `cons()`를 구현해보자.
@@ -169,7 +166,7 @@ type lazyList struct {
 
 func empty() *lazyList {
 	return &lazyList{
-        eval: func() *value {
+        eval: func() *evaluatedList {
 		    return nil
 	    },
     }
@@ -186,8 +183,8 @@ func (l *lazyList) isEmpty() bool {
 func (l *lazyList) cons(item int) *lazyList {
 	return &lazyList{
         // 값이 추가된 새로운 리스트
-		eval: func() *value { 
-			return &value{
+		eval: func() *evaluatedList { 
+			return &evaluatedList{
                 // 새로 추가한 값
 				item:     item, 
                 // 기존의 게으른 리스트
@@ -209,7 +206,7 @@ list.eval().eval().item // 2
 list.eval().eval().eval().item // 1 
 ```
 
-`value`구조체(평가된 리스트)를 보면, `value.item`은 리스트의 첫 요소이고 `value.eval`은 리스트의 첫 요소를 제외한 부분 리스트인 것을 알 수 있다. 해당 요소에 명시적으로 접근할 수 있도록 `head(), tail()`을 구현해보자.
+`evaluatedList`구조체(평가된 리스트)를 보면, `evaluatedList.item`은 리스트의 첫 요소이고 `evaluatedList.nextEval`은 리스트의 첫 요소를 제외한 부분 리스트인 것을 알 수 있다. 해당 요소에 명시적으로 접근할 수 있도록 `head(), tail()`을 구현해보자.
 
 ```go
 func (l *lazyList) head() int {
@@ -305,10 +302,10 @@ func (l *lazyList) mapFunc(f func(a int) int) *lazyList {
 	if l.isEmpty() {
 		return l
 	}
-	return newLazyList(func() *value {
-		return &value{
+	return newLazyList(func() *evaluatedList {
+		return &evaluatedList{
 			item: f(l.head()),
-			nextEval: func() *value {
+			nextEval: func() *evaluatedList {
 				return l.tail().mapFunc(f).eval()
 			},
 		}
@@ -329,10 +326,10 @@ func (l *lazyList) filterFunc(f func(a int) bool) *lazyList {
 	}
 
 	if f(l.head()) {
-		return newLazyList(func() *value {
-			return &value{
+		return newLazyList(func() *evaluatedList {
+			return &evaluatedList{
 				item: l.head(),
-				nextEval: func() *value {
+				nextEval: func() *evaluatedList {
 					return l.tail().filterFunc(f).eval()
 				},
 			}
@@ -402,16 +399,18 @@ rangeFromTo(1, 11).filterFunc(func(a int) bool {
 
 `lazy evaluation`의 장점이라 했던 무한수열 모델링을 해보자. 다음은 자연수 집합을 게으른 리스트로 표현한 코드이다.
 
+- 무한수열에서는 `reduceAll`을 사용할 수 없다.
+
 ```go
 func NaturalList() *lazyList {
 	return increasingList(1)
 }
 
 func increasingList(n int) *lazyList {
-	return newLazyList(func() *value {
-		return &value{
+	return newLazyList(func() *evaluatedList {
+		return &evaluatedList{
 			item: n,
-			nextEval: func() *value {
+			nextEval: func() *evaluatedList {
 				return increasingList(n + 1).eval()
 			},
 		}
@@ -448,3 +447,4 @@ func fibonacci(a, b int) *lazyList {
 // []int{1, 1, 2, 3, 5, 8, 13, 21, 34, 55}
 FibonacciList().TakeN(10)
 ```
+
