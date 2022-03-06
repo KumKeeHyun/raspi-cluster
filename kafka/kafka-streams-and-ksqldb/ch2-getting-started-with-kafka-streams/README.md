@@ -86,14 +86,76 @@ Kafka Streams는 `event-at-a-time processing`(이벤트가 들어오는 즉시 �
 
 ### Kappa Architecture
 
+Kafka Streams와 다른 솔루션을 비교할 때 고려해야 하는 중요한 사항은 유즈케이스가 배치와 스트림 처리가 모두 필요한지 여부이다. Kafka Streams는 스트림 처리만 지원(Kappa Architecture)하는 반면, Spark Streaming, Flink는 배치와 스트림 처리 모두 지원(Lambda architecture)한다. 하지만 두 처리 모델을 모두 사용하는 것에 단점이 없는 것은 아니다. Jay Kreps는 Kafka Streams가 나오기 2년 전에 이미 하이브리드 시스템의 몇가지 단점에 대해 다음과 같이 말했었다.
+
+> 두가지 시스템을 실행하고 디버깅하는 운영 부담은 시간이 갈수록 힘들어 질 것이다. 어떠한 새로운 추상화도 두 시스템을 모두 만족할 수 없다.
+
+이러한 어려움속에서도 `Apache Beam`과 같은 프로젝트는 배치 및 스트림 처리를 위한 통합된 프로그래밍 모델을 정의했고, 최근 몇 년 동안 큰 인기를 누리고 있다. 하지만 Beam은 Flink와 같은 방식으로 Kafka Streams와 비교할 수 없다. Beam은 대부분의 작업을 실행 엔진에 의존하는 API 계층이다. 예를 들어 Spark와 Flink는 Beam의 실행 엔진으로 사용될 수 있다. 따라서 Kafka Streams와 Beam을 비요할 때는, Beam API 외에도 사용할 실행 엔진도 함께 고려해야 한다.
+
+게다가 Beam 기반 파이프라인은 Kafka Streams가 제공하는 몇가지 중요한 기능을 지원하지 않는다. Robert Yokota(실험적인 Kafka Streams Beam Runner 프로젝트를 만든 사람)는 두 프레임워크를 비교하면서 다음과 같이 표현했다.
+
+- Kafka Streams는 `stream-relational processing` 플랫폼이다.
+- Apache Beam은 `stream-only processing` 플랫폼이다.
+
+stream-relational 플랫폼은 stream-only 플랫폼에는 없는 몇가지 기능이 있다.
+
+- relations는 first-class citizens이다. 즉 각 relation은 독립적인 식별정보를 갖고 있다.
+- relations는 다른 relations로 바뀔 수 있다.
+- relations는 특별한 방법으로 쿼리될 수 있다.
+
+말은 복잡하지만 결국 Beam이나 다른 프레임워크에서 사용할 수 없는 기능(스트림의 상태를 쿼리하는 등)을 Kafka Streams는 제공한다는 뜻이다. 카파 아키텍처는 스트림 처리 작업을 위한 보다 간결하고 전문적인 접근 방식(개발 경험을 향상시키고 운영 및 유지보수를 단순화)을 제공한다. 따라서 만약 유즈케이스에 배치 작없이 필요하지 않다면, 람다 아키텍처는 불필요한 복잡성만 야기할 것이다. 
 
 ## Use Cases
 
+Kafka Streams는 무한한 데이터셋을 빠르고 효율적으로 처리하는 데에 최적화되어 있다. 따라서 데이터가 즉시 처리되어야 하는(지연율이 낮아야 하는) 도메인의 솔루션으로 적합하다.
+
 ## Processor Topologies
 
-## Sub Topologies
+Kafka Streams는 프로그램을 입력, 출력, 처리 단계로 표현하는 DFP(Dataflow Programming) 패더라임을 활용한다. 스트림 처리 로직은 일련의 단계로 표현하는 대신에 DAG(Directed Acyclic Graph)로 구조화한다. 
+
+<img src="img/dag.png">
+
+Kafka Streams에는 세가지 기본적인 프로세서가 있다.
+
+- Source processors
+    - 소스는 데이터가 어플리케이션으로 흘러들어오는 진입점이다. 카프카 토픽으로 부터 읽은 데이터는 하나 이상의 스트림 프로세서로 전달된다.
+- Stream processors 
+    - 이 프로세서들은 입력 스트림에 데이터 처리/변환 로직을 적용하는 역할을 한다. high-level DSL에서는, 라이브러리에 있는 내장 연산자(filter, map, flatMap, join 등)를 사용하여 정의된다.
+- Sink processors
+    - 싱크는 앞선 프로세서들에 의해 처리/변환된 데이터를 다시 카프카에 적제하는 역할을 한다. 소스와 같이, 싱크는 카프카 토픽과 연결되어 있다.
+
+프로세서들의 집합은 `processor topology`(커뮤니티에서는 보통 간단하게 topology라 부름)를 형성한다. 앞으로 나올 예제들은 먼저 소스, 스트림, 싱크 프로세서로 연결된 토폴로지를 디자인한 뒤에, 자바 코드로 구현해볼 것이다.
+
+
+개념 설명을 위해 하나의 시나리오를 가정해보자. Kafka Streams를 이용해서 Slack 챗봇을 만들어야 한다. 챗봇을 언급하는 `@StreamsBot` 키워드가 포함된 모든 슬랙 메시지가 저장된 slack-mentions 토픽이 있다. 챗봇을 언급하는 모든 메시지에는 @StreamsBot 뒤에 특정한 명령어가 오길 기대한다.(ex: @StreamsBot restart myservice)
+
+먼저 슬랙 메시지가 옳바른 형식(명령어)인지 검증하는 토폴로지를 정의해야 한다. (1) slack-mentions 토픽에서 데이터를 읽어오고, (2) 메시지 형식이 유효한지 검증한 후, (3) 유효한 메시지라면 valid-mentions 토픽에, 그렇지 않다면 invalid-mentions 토픽에 저장하는 로직이다.
+
+<img src="img/topology.png">
+
+### Sub Topologies
+
+Kafka Streams에는 sub-topologies 개념이있다. 앞선 슬랙 챗봇 예제에서는 소스 토픽이 한 개였지만, 만약 다수의 소스 토픽을 읽어야 하는 경우가 있을 수 있다. 이런 경우 Kafka Streams는 토폴로지를 하위 토폴로지로 나눠 작업을 병렬화한다. 한 입력 스트림(isValid-true 스트림)에 대한 작업은 다른 입력 스트림(isValid-false 스트림)에 대한 작업과 독립적으로 실행될 수 있기 때문에 이러한 분할이 가능하다.
+
+계속해서 슬랙 챗봇을 만들어보자. 기존 토폴로지에서 valid-mentions 토픽을 읽어 명령문을 처리하는 스트림 프로세서와 invalid-mentions 토픽을 읽어 에러 응답을 보내는 스트림 프로세서를 추가한다. 
+
+이제 전체 토폴로지에서는 세가지 토픽(slack-mentions, valid-mentions, invalid-mentions)에서 데이터를 읽어온다. Kafka Streams는 새로운 소스 토픽에서 데이터를 읽을 때마다, 해당 영역을 하위 토폴로지(독립적으로 실행할 수 있는 영역)로 분할한다.
+
+<img src="img/sub-topologies.png">
+
+1번 하위 토폴로지에서 valid-mentions와 invalid-mentions는 싱크 프로세서로 동작하고 2, 3번 하위 토폴로지에서는 소스 프로세서로 동작한다. 이러한 경우 3개의 하위 토폴로지 간에는 직접적인 데이터 교환이 일어나지 않는다. 데이터는 싱크 프로세서를 통해 카프카에 쓰이고, 소스 프로세서를 통해 카프카로부터 다시 읽어온다. 
 
 ### Depth First Processing
+
+Kafka Streams는 데이터를 처리할 때 depth-first 전략을 사용한다. 한 데이터가 토폴로지를 모두 순회해서 처리가 끝날 때까지, 다른 데이터는 토폴로지에 진입하지 않는다.  
+
+<img src="img/depth-first-processing.png">
+
+깊이 우선 전략은 데이터 흐름을 추론하는 것을 쉽게 만들어주지만, 스트림 프로세서의 연산이 느리다면 동일한 스레드에서 처리될 다음 데이터 처리를 지연시킬 수 있다. 
+
+<img src="img/depth-first-processing-wrong.png">
+
+> 다수의 sub-topologies가 실행중이라면, single-event 규칙은 전체 토폴로지에 적용되지 않고, 각 sub-topologies에 적용된다. 
 
 ### Benefits of Dataflow Programming
 
