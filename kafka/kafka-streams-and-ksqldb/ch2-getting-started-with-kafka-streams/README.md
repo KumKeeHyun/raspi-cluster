@@ -161,4 +161,23 @@ Kafka Streams는 데이터를 처리할 때 depth-first 전략을 사용한다. 
 
 ### Tasks and Stream Threads
 
+Kafka Streams에서 토폴로지를 정의하는 시점에는 실제로 프로그램을 실행하지 않는다. 대신에 데이터가 어떻게 흐르고 처리되어야 하는지 템플릿을 생성한다. 이 템플릿(토폴로지)는 어플리케이션에서 다수의 task로 인스턴스화되어 병렬 처리된다. 
+
+task는 Kafka Stream 어플리케이션이 병렬로 처리할 수 있는 작업의 가장 작은 단위이다. 생성되는 task의 개수는 소스 토픽들 중에 파티션 개수가 가장 많은 토픽에 의해 결정된다. 수식으로 표현하면 다음과 같다.
+
+`num_of_tasks = max(src_topic_1_partitions, src_topic_2_partitions, ..., src_topic_n_partitions)`
+
+예를 들어, 구성한 토폴로지가 3개의 소스 토픽을 컨슘하고, 각각 4, 10, 16개의 파티션을 갖고 있다면, Kafka Streams는 16개의 tasks를 생성한다. 이후 소스 토픽의 파티션들을 생성된 tasks에 할당한다.
+
+stream thread는 논리적인 단위인 task를 실제로 실행하는 객체이다. thread는 task와는 달리 실행할 개수를 `num.stream.threads` 설정값을 통해 직접 설정해야 한다. 상한값은 생성되는 tasks의 개수이고, 스레드 개수를 결정하기 위한 다양한 전략들이 있다. 
+
+소스 토픽의 파티션이 4개일 때, tasks는 4개 생성된다. 이때 `num.stream.threads = 2`로 설정했다면 Kafka Streams는 다음과 같이 실행한다.
+
+<img src="img/tasks-threads-1.png">
+
+한 thread에 한 task만 할당하는 것이 가장 이상적이지만, 가끔은 CPU 자원을 최대한 활용하기 위해 하나 이상의 tasks를 할당하는 것이 좋을 수도 있다. 스레드 수를 늘린다고 해서 tasks 수가 늘어나는 것은 아니지만, 스레드간의 tasks 분포는 바뀐다. 다음은 동일한 상황에서 `num.stream.threads = 4`로 설정한 전략이다.
+
+<img src="img/tasks-threads-2.png">
+
+
 ## High Level DSL Versus Low Level Processor API
