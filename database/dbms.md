@@ -27,7 +27,7 @@
 
 ## 일반적인 DBMS 구조 
 
-<img height="800" alt="image" src="https://user-images.githubusercontent.com/44857109/214763977-b9174d6c-a646-470d-83a1-8c5dd9ecc763.png">
+<img height="800" alt="출처:oreilly-database internals" src="https://user-images.githubusercontent.com/44857109/214763977-b9174d6c-a646-470d-83a1-8c5dd9ecc763.png">
 
 - Transport
   - 클라이언트 요청 수신 및 응답
