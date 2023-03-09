@@ -69,15 +69,15 @@ etcd는 다음과 같이 3가지 경우로 나눠 raft.Node 객체를 생성한�
 func bootstrapRaft(cfg config.ServerConfig, cluster *bootstrapedCluster, bwal *bootstrappedWAL) *bootstrappedRaft {
 	switch {
 	case !bwal.haveWAL && !cfg.NewCluster:
-        // WAL이 없고 새로운 클러스터를 초기화하는 것도 아님 -> 기존 클러스터에 새롭게 join 하는 노드
-        // peers를 비움 -> restartNode
+		// WAL이 없고 새로운 클러스터를 초기화하는 것도 아님 -> 기존 클러스터에 새롭게 join 하는 노드
+		// peers를 비움 -> restartNode
 		return bootstrapRaftFromCluster(cfg, cluster.cl, nil, bwal)
 	case !bwal.haveWAL && cfg.NewCluster:
-        // WAL이 없고 새로운 클러스터를 초기화함 -> 새로운 클러스터를 구성하는 노드 
-        // peers를 전달 -> startNode
+		// WAL이 없고 새로운 클러스터를 초기화함 -> 새로운 클러스터를 구성하는 노드 
+		// peers를 전달 -> startNode
 		return bootstrapRaftFromCluster(cfg, cluster.cl, cluster.cl.MemberIDs(), bwal)
 	case bwal.haveWAL:
-        // WAL이 있음 -> 충돌 or 중단되었다가 재시작하는 노드
+		// WAL이 있음 -> 충돌 or 중단되었다가 재시작하는 노드
 		// peers를 비움 -> restartNode
 		return bootstrapRaftFromWAL(cfg, bwal)
 	default:
