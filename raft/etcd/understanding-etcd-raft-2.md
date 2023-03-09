@@ -41,7 +41,7 @@
 
 # godis
 
-간단하게 복제기능을 붙일 godis에 대해 살펴보겠습니다.
+간단하게 복제 기능을 붙일 godis에 대해 살펴보겠습니다.
 
 godis는 RESP v2 프로토콜을 사용하고 다음과 같이 `set`, `get`, `mget` 3개의 string commands만 지원합니다. 나름 `set`은 redis에서 제공하는 모든 옵션(ex, exat, get, keepttl 등)을 동일하게 처리하도록 구현했습니다. list commands까지는 추가하려는 의지가 있었지만 raft를 추가하는 바람에 우선순위가 밀렸습니다. 
 
@@ -51,7 +51,7 @@ godis는 RESP v2 프로토콜을 사용하고 다음과 같이 `set`, `get`, `mg
 
 # bootstrap
 
-readme 문서에도 나와있는 것처럼 `raft.StartNode`, `raft.RestartNode`을 통해 raft.Node 객체를 생성해야 한다. 이떄 노드의 bootstrap 상태에 따라 peers를 넘겨주느냐(StartNode), 안넘겨주느냐(RestartNode)를 선택한다.
+readme 문서에도 나와있는 것처럼 `raft.StartNode`, `raft.RestartNode`을 통해 raft.Node 객체를 생성해야 한다. 이때 노드의 bootstrap 상태에 따라 peers를 넘겨주느냐(StartNode), 안넘겨주느냐(RestartNode)를 선택한다.
 
 ## etcd의 경우
 
