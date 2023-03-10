@@ -7,6 +7,7 @@
 - [etcd raft 모듈 사용해보기](#etcd-raft-모듈-사용해보기)
 - [TOC](#toc)
 - [서론](#서론)
+	- [ChatGPT님는 알고있을까요?](#chatgpt님는-알고있을까요)
 - [godis](#godis)
 - [bootstrap](#bootstrap)
 	- [etcd의 경우](#etcd의-경우)
@@ -38,6 +39,127 @@
 구현 코드는 대부분 [etcd-raftexample](https://github.com/etcd-io/etcd/tree/main/contrib/raftexample)을 참고했습니다. 그래서 코드를 어떻게 작성해야하는지 보다는 각 코드가 갖는 의미를 풀어내는 방식으로 작성했습니다. 혹시라도 나중에 etcd-raft 모듈을 사용하게 될 분들께 도움이 됐으면 좋겠습니다.
 
 또 1편에서 건너뛰었던 Snapshot 처리 부분을 이 글에서 정리했습니다. 
+
+## ChatGPT님는 알고있을까요?
+
+먼저 etcd raft 모듈을 사용해서 분산 데이터베이스를 만드는 방법을 질문해봤습니다.
+
+<img width="784" alt="image" src="https://user-images.githubusercontent.com/44857109/224046002-4709214a-8869-4f79-a844-1de62b7f3457.png">
+
+대답이 애매모호해서 예시 코드를 요청해봤습니다.
+
+<img width="791" alt="image" src="https://user-images.githubusercontent.com/44857109/224205390-d4589b28-6f79-496d-a489-36d3f36f30cb.png">
+
+오...?
+
+2번째 질문에서 ChatGPT가 제공해준 코드 전체.
+
+```go
+package main
+
+import (
+    "flag"
+    "log"
+    "net"
+    "net/http"
+    "net/rpc"
+    "os"
+
+    "github.com/coreos/etcd/raft"
+    "github.com/coreos/etcd/raft/raftpb"
+)
+
+type KeyValueStore struct {
+    store map[string]string
+}
+
+func (kv *KeyValueStore) Get(key string, value *string) error {
+    *value = kv.store[key]
+    return nil
+}
+
+func (kv *KeyValueStore) Set(key string, value string, success *bool) error {
+    kv.store[key] = value
+    *success = true
+    return nil
+}
+
+func main() {
+    var (
+        id      = flag.Int("id", 0, "node ID")
+        peers   = flag.String("peers", "", "comma separated list of peers")
+        join    = flag.Bool("join", false, "join an existing cluster")
+        storage = flag.String("storage", "", "path to persistent storage")
+    )
+
+    flag.Parse()
+
+    store := &KeyValueStore{
+        store: make(map[string]string),
+    }
+
+    // Create Raft node configuration
+    cfg := &raft.Config{
+        ID:              uint64(*id),
+        ElectionTick:    10,
+        HeartbeatTick:   1,
+        Storage:         raft.NewMemoryStorage(),
+        MaxSizePerMsg:   4096,
+        MaxInflightMsgs: 256,
+    }
+
+    // Create transport layer
+    transport, err := raft.NewTCPTransport(":7000", nil, 3, 10*time.Second, os.Stderr)
+    if err != nil {
+        log.Fatalf("Error creating transport layer: %v", err)
+    }
+
+    // Create Raft node
+    node, err := raft.NewNode(cfg, store, transport, nil, nil)
+    if err != nil {
+        log.Fatalf("Error creating Raft node: %v", err)
+    }
+
+    // Add peers to node if joining an existing cluster
+    if *join {
+        var err error
+        var addrs []string
+        for _, addr := range strings.Split(*peers, ",") {
+            addrs = append(addrs, addr)
+        }
+        node.JoinCluster(addrs)
+    }
+
+    // Start the node
+    node.Start()
+
+    // Serve HTTP requests
+    kv := &KeyValueStore{
+        store: make(map[string]string),
+    }
+    rpc.Register(kv)
+    rpc.HandleHTTP()
+    l, err := net.Listen("tcp", ":8000")
+    if err != nil {
+        log.Fatalf("Error listening: %v", err)
+    }
+    go http.Serve(l, nil)
+
+    // Wait for node to exit
+    <-node.ApependEnts()
+
+    // Stop the node
+    node.Stop()
+}
+```
+
+마지막에는 코드 동작 설명까지 해주는 친절한 모습..
+
+<img width="791" alt="image" src="https://user-images.githubusercontent.com/44857109/224205560-0e1d61e7-d055-4ebe-85f7-f9b757abecc2.png">
+
+거짓말이 많긴 하지만 전달인자로 id, peers 정보를 받는 부분과 raft.Config를 사용하는 부분은 정말 아는게 아닌가? 하고 착각할 정도로 정확해서 깜짝 놀랬습니다. 
+
+그래도 아직 ChatGPT님이 정확한 정보를 제공해주지 않으니 제가 이 글을 쓰는데 의미가 있는 것 같습니다.
 
 # godis
 
