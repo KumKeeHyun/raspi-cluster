@@ -40,6 +40,8 @@
 
 또 1편에서 건너뛰었던 Snapshot 처리 부분을 이 글에서 정리했습니다. 
 
+> 현재 etcd 레포에서 raft는 삭제되었고 별도 레포로 독립했습니다. 기존 raftexample은 etcd의 코드들(rafthttp, wal...)에 의존하고있어서 새로운 독립적인 example을 만드는 중인 것 같습니다. [etcd-issues-14713](https://github.com/etcd-io/etcd/issues/14713), [raft-issues-2](https://github.com/etcd-io/raft/issues/2).
+
 ## ChatGPT님는 알고있을까요?
 
 먼저 etcd raft 모듈을 사용해서 분산 데이터베이스를 만드는 방법을 질문해봤습니다.
